@@ -1,0 +1,135 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { XP_REWARDS } from "./xp";
+import { calculateStreak } from "./reading-stats";
+
+export async function awardXp(
+  supabase: SupabaseClient,
+  userId: string,
+  amount: number
+): Promise<number> {
+  const { data } = await supabase
+    .from("users")
+    .select("xp")
+    .eq("id", userId)
+    .single();
+  const newXp = (data?.xp ?? 0) + amount;
+  await supabase.from("users").update({ xp: newXp }).eq("id", userId);
+  return newXp;
+}
+
+export async function syncChallengeProgress(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<string[]> {
+  const completedTitles: string[] = [];
+
+  const { data: userChallenges } = await supabase
+    .from("user_challenges")
+    .select("*, challenge:challenges(*)")
+    .eq("user_id", userId)
+    .eq("completed", false);
+
+  if (!userChallenges?.length) return completedTitles;
+
+  const { data: sessions } = await supabase
+    .from("reading_sessions")
+    .select("date, minutes_read")
+    .eq("user_id", userId);
+
+  const { data: finishedBooks } = await supabase
+    .from("user_books")
+    .select("finished_at")
+    .eq("user_id", userId)
+    .eq("status", "finished");
+
+  const { data: gameScores } = await supabase
+    .from("reading_game_scores")
+    .select("score")
+    .eq("user_id", userId);
+
+  const streak = calculateStreak(sessions ?? []);
+  const totalMinutes = (sessions ?? []).reduce(
+    (a, s) => a + (s.minutes_read ?? 0),
+    0
+  );
+  const booksFinished = finishedBooks?.length ?? 0;
+  const bestQuiz = Math.max(0, ...(gameScores?.map((g) => g.score) ?? [0]));
+
+  for (const uc of userChallenges) {
+    const challengeData = Array.isArray(uc.challenge) ? uc.challenge[0] : uc.challenge;
+    const ch = (challengeData ?? null) as {
+      id: string;
+      title: string;
+      type: string;
+      target_value: number;
+      start_date: string | null;
+      end_date: string | null;
+    } | null;
+    if (!ch) continue;
+
+    let progress = 0;
+    switch (ch.type) {
+      case "reading_streak":
+        progress = streak;
+        break;
+      case "books_finished":
+        progress = booksFinished;
+        break;
+      case "minutes_read":
+        progress = totalMinutes;
+        break;
+      case "quiz_score":
+        progress = bestQuiz;
+        break;
+      default:
+        progress = uc.progress ?? 0;
+    }
+
+    const done = progress >= ch.target_value;
+    await supabase
+      .from("user_challenges")
+      .update({
+        progress,
+        completed: done,
+        completed_at: done ? new Date().toISOString() : null,
+      })
+      .eq("id", uc.id);
+
+    if (done && !uc.completed) {
+      await awardXp(supabase, userId, XP_REWARDS.complete_challenge);
+      completedTitles.push(ch.title);
+    }
+  }
+
+  return completedTitles;
+}
+
+export async function enrollInAvailableChallenges(
+  supabase: SupabaseClient,
+  userId: string
+) {
+  const { data: existing } = await supabase
+    .from("user_challenges")
+    .select("challenge_id")
+    .eq("user_id", userId);
+
+  const existingIds = new Set((existing ?? []).map((e) => e.challenge_id));
+
+  const { data: challenges } = await supabase
+    .from("challenges")
+    .select("id")
+    .is("classroom_id", null);
+
+  const toEnroll = (challenges ?? []).filter((c) => !existingIds.has(c.id));
+
+  if (toEnroll.length > 0) {
+    await supabase.from("user_challenges").insert(
+      toEnroll.map((c) => ({
+        user_id: userId,
+        challenge_id: c.id,
+        progress: 0,
+        completed: false,
+      }))
+    );
+  }
+}
