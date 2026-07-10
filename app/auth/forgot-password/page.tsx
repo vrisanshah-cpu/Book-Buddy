@@ -7,6 +7,9 @@ import { AuthLayout } from "@/components/auth/AuthLayout";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 
+
+export const dynamic = 'force-dynamic';
+
 export default function ForgotPasswordPage() {
   const supabase = createClient();
   const [email, setEmail] = useState("");

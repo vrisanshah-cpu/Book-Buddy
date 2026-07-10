@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/Button";
 import { ROLE_HOME } from "@/lib/constants";
 import type { UserRole } from "@/lib/types";
 
+export const dynamic = 'force-dynamic';
+
 const ROLES: { id: UserRole; label: string; emoji: string; desc: string }[] = [
   { id: "kid", label: "Kid", emoji: "🌟", desc: "I love reading adventures!" },
   { id: "parent", label: "Parent", emoji: "👨‍👩‍👧", desc: "I track my child's reading" },
