@@ -69,7 +69,7 @@ export default function RegisterPage() {
       return;
     }
 
-    await supabase.from("users").upsert({
+    const { error: upsertError } = await supabase.from("users").upsert({
       id: data.user.id,
       email,
       role,
@@ -77,6 +77,13 @@ export default function RegisterPage() {
       school_name: role === "teacher" ? schoolName : null,
       grade_levels: role === "teacher" ? gradeLevels : null,
     });
+    
+    if (upsertError) {
+      console.error("Failed to save user profile:", upsertError);
+      setError(`Profile setup failed: ${upsertError.message}`);
+      setLoading(false);
+      return;
+    }
 
     if (role === "parent" && addChild && childUsername && childName) {
       const res = await fetch("/api/auth/create-child", {
