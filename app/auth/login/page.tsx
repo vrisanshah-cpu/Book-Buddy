@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/Button";
 import { ROLE_HOME } from "@/lib/constants";
 import type { UserRole } from "@/lib/types";
 
+export const dynamic = 'force-dynamic';
+
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
