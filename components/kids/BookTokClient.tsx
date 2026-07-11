@@ -49,7 +49,8 @@ export function BookTokClient({ userId }: { userId: string }) {
     let query = supabase
       .from("booktok_posts")
       .select(
-        "id, content, likes, created_at, user_id, book:books(title, author, cover_url), users(display_name, avatar_url)"
+        "id, content, likes, created_at, user_id, book:books(title, author, cover_url), users!booktok_posts_user_id_fkey(display_name, avatar_url)"
+      )
       )
       .order("likes", { ascending: false })
       .limit(50);
