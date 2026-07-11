@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { searchOpenLibrary } from "@/lib/open-library";
+import { searchOpenLibrary, type OpenLibraryBook } from "@/lib/open-library";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
@@ -19,6 +19,8 @@ export function TeacherBookListsClient({
   const [selectedList, setSelectedList] = useState("");
   const [classroomId, setClassroomId] = useState(classrooms[0]?.id ?? "");
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<OpenLibraryBook[]>([]);
+  const [searching, setSearching] = useState(false);
 
   useEffect(() => {
     supabase
@@ -44,10 +46,16 @@ export function TeacherBookListsClient({
     }
   }
 
-  async function addBookToList() {
+  async function handleSearch() {
+    if (!query.trim()) return;
+    setSearching(true);
     const results = await searchOpenLibrary(query);
-    const b = results[0];
-    if (!b || !selectedList) return;
+    setSearchResults(results);
+    setSearching(false);
+  }
+
+  async function addBookToList(b: OpenLibraryBook) {
+    if (!selectedList) return;
 
     const { data: book } = await supabase
       .from("books")
@@ -65,6 +73,7 @@ export function TeacherBookListsClient({
         list_id: selectedList,
         book_id: book.id,
       });
+      setSearchResults(searchResults.filter((r) => r.title !== b.title));
     }
   }
 
@@ -101,11 +110,39 @@ export function TeacherBookListsClient({
       </select>
 
       <div className="mt-4 flex gap-2">
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Add book…" />
-        <Button variant="secondary" onClick={addBookToList}>
-          Add
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search title or author…"
+          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+        />
+        <Button variant="secondary" onClick={handleSearch} disabled={searching}>
+          {searching ? "…" : "Search"}
         </Button>
       </div>
+
+      {searchResults.length > 0 && (
+        <div className="mt-3 space-y-2 rounded-xl border p-3">
+          {searchResults.map((b, i) => (
+            <div
+              key={`${b.title}-${i}`}
+              className="flex items-center justify-between gap-2 rounded-lg border p-3"
+            >
+              <div className="min-w-0">
+                <p className="font-semibold truncate">{b.title}</p>
+                <p className="text-sm text-slate-500">{b.author}</p>
+              </div>
+              <Button
+                variant="primary"
+                className="!px-3 !py-1.5 !text-xs shrink-0"
+                onClick={() => addBookToList(b)}
+              >
+                Add to list
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="mt-6 flex gap-2 items-center">
         <select
