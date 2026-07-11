@@ -78,11 +78,16 @@ export function TeacherBookListsClient({
   }
 
   async function assignToClass() {
-    await fetch("/api/teacher/book-list/assign", {
+    const res = await fetch("/api/teacher/book-list/assign", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ listId: selectedList, classroomId }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert("Assign failed: " + (data.error ?? res.status));
+      return;
+    }
     alert("Assigned to all students in class!");
   }
 
