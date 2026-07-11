@@ -39,18 +39,23 @@ export function ParentBooksClient({ children }: { children?: ReactNode }) {
     setResults(r);
   }
 
-  async function addBook(book: OpenLibraryBook, status: string) {
-    await fetch("/api/books/shelf", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...book, status, targetUserId: selectedChild }),
-    });
-    const { data } = await supabase
-      .from("user_books")
-      .select("id, status, progress_percent, book:books(title, author)")
-      .eq("user_id", selectedChild);
-    setShelf((data as unknown as ShelfItem[]) ?? []);
+async function addBook(book: OpenLibraryBook, status: string) {
+  const res = await fetch("/api/books/shelf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...book, status, targetUserId: selectedChild }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert("Failed to add book: " + (data.error ?? res.status));
+    return;
   }
+  const { data } = await supabase
+    .from("user_books")
+    .select("id, status, progress_percent, book:books(title, author)")
+    .eq("user_id", selectedChild);
+  setShelf((data as unknown as ShelfItem[]) ?? []);
+}
 
   const selectedProfile = linkedChildren.find(
     (c: ParentChildProfileData) => c.id === selectedChild

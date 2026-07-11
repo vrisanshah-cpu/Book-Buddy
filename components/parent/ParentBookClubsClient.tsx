@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { searchOpenLibrary } from "@/lib/open-library";
+import { searchOpenLibrary, type OpenLibraryBook } from "@/lib/open-library";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
@@ -12,6 +12,8 @@ export function ParentBookClubsClient({ parentId }: { parentId: string }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [bookQuery, setBookQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<OpenLibraryBook[]>([]);
+  const [searching, setSearching] = useState(false);
   const [selectedBook, setSelectedBook] = useState<{ title: string; author: string; cover_url: string | null } | null>(null);
 
   useEffect(() => {
@@ -21,6 +23,20 @@ export function ParentBookClubsClient({ parentId }: { parentId: string }) {
       .eq("created_by", parentId)
       .then(({ data }) => setClubs(data ?? []));
   }, [parentId, supabase]);
+
+  async function handleSearch() {
+    if (!bookQuery.trim()) return;
+    setSearching(true);
+    const results = await searchOpenLibrary(bookQuery);
+    setSearchResults(results);
+    setSearching(false);
+  }
+
+  function pickBook(b: OpenLibraryBook) {
+    setSelectedBook(b);
+    setSearchResults([]);
+    setBookQuery("");
+  }
 
   async function createClub() {
     const res = await fetch("/api/book-clubs/create", {
@@ -59,21 +75,46 @@ export function ParentBookClubsClient({ parentId }: { parentId: string }) {
         <div className="mt-4 space-y-3">
           <Input label="Club name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
+
           <div className="flex gap-2">
-            <Input placeholder="Search book…" value={bookQuery} onChange={(e) => setBookQuery(e.target.value)} />
-            <Button
-              variant="secondary"
-              onClick={async () => {
-                const r = await searchOpenLibrary(bookQuery);
-                if (r[0]) setSelectedBook(r[0]);
-              }}
-            >
-              Pick
+            <Input
+              placeholder="Search book…"
+              value={bookQuery}
+              onChange={(e) => setBookQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            />
+            <Button variant="secondary" onClick={handleSearch} disabled={searching}>
+              {searching ? "…" : "Search"}
             </Button>
           </div>
+
+          {searchResults.length > 0 && (
+            <div className="space-y-2 rounded-xl border p-3">
+              {searchResults.map((b, i) => (
+                <div
+                  key={`${b.title}-${i}`}
+                  className="flex items-center justify-between gap-2 rounded-lg border p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="font-semibold truncate">{b.title}</p>
+                    <p className="text-sm text-slate-500">{b.author}</p>
+                  </div>
+                  <Button
+                    variant="primary"
+                    className="!px-3 !py-1.5 !text-xs shrink-0"
+                    onClick={() => pickBook(b)}
+                  >
+                    Pick
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {selectedBook && (
             <p className="text-sm">Current book: {selectedBook.title}</p>
           )}
+
           <Button variant="primary" onClick={createClub}>
             Create club
           </Button>
