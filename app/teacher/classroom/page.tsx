@@ -1,5 +1,6 @@
 import { getProfile } from "@/lib/supabase/server";
 import { createClient } from "@/lib/supabase/server";
+import { CreateClassroomForm } from "@/components/teacher/CreateClassroomForm";
 
 export default async function TeacherClassroomPage() {
   const { profile } = await getProfile();
@@ -36,11 +37,12 @@ export default async function TeacherClassroomPage() {
         </div>
       ))}
 
-      {(!classrooms || classrooms.length === 0) && (
-        <p className="mt-4 text-slate-500">
-          No classroom yet. Re-register or run setup to create one.
-        </p>
-      )}
+{(!classrooms || classrooms.length === 0) && (
+  <div className="mt-4">
+    <p className="text-slate-500">No classroom yet — create one below.</p>
+    <CreateClassroomForm teacherId={profile?.id ?? ""} />
+  </div>
+)}
 
       <h2 className="mt-10 text-lg font-semibold text-slate-900">Students</h2>
       <div className="mt-4 overflow-hidden rounded-xl bg-white shadow-sm">
