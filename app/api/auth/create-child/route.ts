@@ -23,7 +23,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { username, displayName, age, avatarUrl, parentId } = body;
+  const { username, displayName, age, avatarUrl, parentId, password } = body;
 
   if (parentId !== user.id) {
     return NextResponse.json({ error: "Invalid parent" }, { status: 403 });
@@ -33,20 +33,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Username and display name required" }, { status: 400 });
   }
 
-  const parentEmail = parentProfile.email ?? user.email ?? "parent";
-  const childEmail = `${user.id}+${username.toLowerCase().replace(/\W/g, "")}@bookbuddy.local`;
-  const tempPassword = crypto.randomUUID() + "Aa1!";
+  if (!password || password.length < 6) {
+    return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
+  }
+
+  const cleanUsername = username.toLowerCase().replace(/\W/g, "");
+  const childEmail = `${user.id}+${cleanUsername}@bookbuddy.local`;
 
   const admin = createAdminClient();
 
+  const { data: existingUsername } = await admin
+    .from("users")
+    .select("id")
+    .eq("username", cleanUsername)
+    .maybeSingle();
+
+  if (existingUsername) {
+    return NextResponse.json({ error: "That username is already taken" }, { status: 409 });
+  }
+
   const { data: childAuth, error: createError } = await admin.auth.admin.createUser({
     email: childEmail,
-    password: tempPassword,
+    password,
     email_confirm: true,
     user_metadata: {
       role: "kid",
       display_name: displayName,
-      username: username.toLowerCase(),
+      username: cleanUsername,
       parent_managed: true,
     },
   });
@@ -65,7 +78,7 @@ export async function POST(request: Request) {
     email: childEmail,
     role: "kid",
     display_name: displayName,
-    username: username.toLowerCase(),
+    username: cleanUsername,
     age: age ?? null,
     avatar_url: avatarUrl ?? null,
   });
@@ -81,7 +94,6 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     childId,
-    loginHint: `Child can log in with username "${username}" — contact support for password setup, or use parent dashboard.`,
     childEmail,
   });
 }

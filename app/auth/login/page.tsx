@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic';
 export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
-  const [email, setEmail] = useState("");
+  const [emailOrUsername, setEmailOrUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,8 +25,27 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
 
+    let loginEmail = emailOrUsername.trim();
+
+    // If it doesn't look like an email, treat it as a kid's username
+    // and resolve it to the hidden internal email first.
+    if (!loginEmail.includes("@")) {
+      const res = await fetch("/api/auth/resolve-username", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginEmail }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "No account found with that username");
+        setLoading(false);
+        return;
+      }
+      loginEmail = data.email;
+    }
+
     const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email,
+      email: loginEmail,
       password,
     });
 
@@ -51,13 +70,13 @@ export default function LoginPage() {
     <AuthLayout title="Welcome back!" subtitle="Log in to continue reading.">
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input
-          id="email"
-          label="Email"
-          type="email"
-          autoComplete="email"
+          id="emailOrUsername"
+          label="Email or Username"
+          type="text"
+          autoComplete="username"
           required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          value={emailOrUsername}
+          onChange={(e) => setEmailOrUsername(e.target.value)}
         />
         <Input
           id="password"

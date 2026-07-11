@@ -25,10 +25,16 @@ export function ParentSettingsClient({
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [age, setAge] = useState("8");
+  const [password, setPassword] = useState("");
   const [avatar, setAvatar] = useState(AVATARS[0]);
   const [message, setMessage] = useState("");
 
   async function addChild() {
+    if (password.length < 6) {
+      setMessage("Password must be at least 6 characters.");
+      return;
+    }
+
     const res = await fetch("/api/auth/create-child", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -38,11 +44,14 @@ export function ParentSettingsClient({
         displayName,
         age: parseInt(age, 10),
         avatarUrl: avatar,
+        password,
       }),
     });
     const data = await res.json();
     if (res.ok) {
-      setMessage(`Added ${displayName}!`);
+      setMessage(
+        `Added ${displayName}! They can log in with username "${username}" and the password you set.`
+      );
       setLinkedChildren([
         ...linkedChildren,
         {
@@ -54,6 +63,7 @@ export function ParentSettingsClient({
       ]);
       setUsername("");
       setDisplayName("");
+      setPassword("");
     } else {
       setMessage(data.error ?? "Failed");
     }
@@ -85,6 +95,12 @@ export function ParentSettingsClient({
           <Input label="Name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
           <Input label="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
           <Input label="Age" type="number" value={age} onChange={(e) => setAge(e.target.value)} />
+          <Input
+            label="Password (tell this to your child)"
+            type="text"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
           <div className="flex gap-2">
             {AVATARS.map((a) => (
               <button
