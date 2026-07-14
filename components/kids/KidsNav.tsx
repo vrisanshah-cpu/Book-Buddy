@@ -8,10 +8,12 @@ import { FeedbackSurveyLauncher } from "@/components/feedback/FeedbackSurveyLaun
 const links = [
   { href: "/kids/home", label: "Home", emoji: "🏠" },
   { href: "/kids/shelf", label: "Shelf", emoji: "📚" },
+  { href: "/kids/discover", label: "Discover", emoji: "🔎" },
   { href: "/kids/challenges", label: "Challenges", emoji: "🏆" },
   { href: "/kids/reading-game", label: "Game", emoji: "🎮" },
   { href: "/kids/booktok", label: "BookTok", emoji: "🎬" },
   { href: "/kids/book-club", label: "Clubs", emoji: "👥" },
+  { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
 ];
 
 export function KidsNav() {
