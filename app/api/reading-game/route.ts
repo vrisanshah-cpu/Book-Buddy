@@ -24,35 +24,33 @@ export async function POST(request: Request) {
       return NextResponse.json(buildDemoQuiz(title ?? "this book", author ?? "the author"));
     }
 
-    const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 2000,
-      system: `You are a reading comprehension quiz generator for children ages 5-12.
+      const response = await client.messages.create({
+        model: "claude-sonnet-5",
+        max_tokens: 2000,
+        system: `You are a reading comprehension quiz generator for children ages 5-12.
 Generate exactly 5 multiple choice questions about the book provided.
 Each question should have 4 answer options (A, B, C, D) with exactly one correct answer.
 Return ONLY valid JSON in this format:
 {"questions": [{"question": "...", "options": ["A. ...", "B. ...", "C. ...", "D. ..."], "correct": "A"}]}`,
-      messages: [
-        {
-          role: "user",
-          content: `Book: "${title}" by ${author}. ${description ? `Summary: ${description}` : ""}`,
-        },
-      ],
-    });
+        messages: [
+          {
+            role: "user",
+            content: `Book: "${title}" by ${author}. ${description ? `Summary: ${description}` : ""}`,
+          },
+        ],
+      });
 
-    const text =
-      response.content[0].type === "text" ? response.content[0].text : "";
-    try {
+      const text =
+        response.content[0].type === "text" ? response.content[0].text : "";
       const parsed = JSON.parse(text.replace(/```json\n?|\n?```/g, "").trim());
       return NextResponse.json(parsed);
     } catch {
       return NextResponse.json(buildDemoQuiz(title, author));
     }
-  }
-
   if (action === "submit") {
     const { bookId, score, correct, total } = body;
     await supabase.from("reading_game_scores").insert({
