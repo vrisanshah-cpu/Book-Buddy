@@ -8,9 +8,10 @@ import { Input } from "@/components/ui/Input";
 
 export function ParentBookClubsClient({ parentId }: { parentId: string }) {
   const supabase = createClient();
-  const [clubs, setClubs] = useState<{ id: string; name: string; description: string | null }[]>([]);
+  const [clubs, setClubs] = useState<{ id: string; name: string; description: string | null; invite_code?: string | null }[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [isPrivate, setIsPrivate] = useState(false);
   const [bookQuery, setBookQuery] = useState("");
   const [searchResults, setSearchResults] = useState<OpenLibraryBook[]>([]);
   const [searching, setSearching] = useState(false);
@@ -19,7 +20,7 @@ export function ParentBookClubsClient({ parentId }: { parentId: string }) {
   useEffect(() => {
     supabase
       .from("book_clubs")
-      .select("id, name, description")
+      .select("id, name, description, invite_code")
       .eq("created_by", parentId)
       .then(({ data }) => setClubs(data ?? []));
   }, [parentId, supabase]);
@@ -46,6 +47,7 @@ export function ParentBookClubsClient({ parentId }: { parentId: string }) {
         name,
         description,
         book: selectedBook,
+        isPrivate,
       }),
     });
     if (res.ok) {
@@ -54,6 +56,7 @@ export function ParentBookClubsClient({ parentId }: { parentId: string }) {
       setName("");
       setDescription("");
       setSelectedBook(null);
+      setIsPrivate(false);
     }
   }
 
@@ -66,6 +69,11 @@ export function ParentBookClubsClient({ parentId }: { parentId: string }) {
           <div key={c.id} className="rounded-lg bg-white p-4 shadow-sm">
             <p className="font-semibold">{c.name}</p>
             <p className="text-sm text-slate-500">{c.description}</p>
+            {c.invite_code && (
+              <p className="mt-1 text-xs text-kids-purple">
+                Invite code: <span className="font-mono font-bold">{c.invite_code}</span>
+              </p>
+            )}
           </div>
         ))}
       </div>
@@ -75,6 +83,16 @@ export function ParentBookClubsClient({ parentId }: { parentId: string }) {
         <div className="mt-4 space-y-3">
           <Input label="Club name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
+
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={isPrivate}
+              onChange={(e) => setIsPrivate(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            Invite-only (only people with the code can join)
+          </label>
 
           <div className="flex gap-2">
             <Input

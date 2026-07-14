@@ -30,6 +30,8 @@ export function BookClubClient({ userId }: { userId: string }) {
   const [posts, setPosts] = useState<ClubPost[]>([]);
   const [newPost, setNewPost] = useState("");
   const [members, setMembers] = useState<{ display_name: string; avatar_url: string | null }[]>([]);
+  const [inviteCode, setInviteCode] = useState("");
+  const [joinError, setJoinError] = useState("");
 
   const loadClubs = useCallback(async () => {
     const { data: memberships } = await supabase
@@ -56,6 +58,7 @@ export function BookClubClient({ userId }: { userId: string }) {
     const { data: all } = await supabase
       .from("book_clubs")
       .select("id, name, description, current_book_id")
+      .eq("is_private", false)
       .limit(20);
 
     setAvailable(
@@ -127,6 +130,22 @@ export function BookClubClient({ userId }: { userId: string }) {
       user_id: userId,
     });
     loadClubs();
+  }
+
+  async function joinWithCode() {
+    setJoinError("");
+    const res = await fetch("/api/book-clubs/join-private", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ inviteCode }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setInviteCode("");
+      loadClubs();
+    } else {
+      setJoinError(data.error ?? "Something went wrong.");
+    }
   }
 
   async function postComment() {
@@ -236,6 +255,19 @@ export function BookClubClient({ userId }: { userId: string }) {
           <p className="text-slate-500">Join a club to get started!</p>
         )}
       </div>
+
+      <h2 className="mt-10 font-bold text-slate-800">Have an invite code?</h2>
+      <div className="mt-3 flex gap-2">
+        <Input
+          placeholder="Enter invite code…"
+          value={inviteCode}
+          onChange={(e) => setInviteCode(e.target.value)}
+        />
+        <Button variant="kids" onClick={joinWithCode}>
+          Join
+        </Button>
+      </div>
+      {joinError && <p className="mt-2 text-sm text-red-600">{joinError}</p>}
 
       <h2 className="mt-10 font-bold text-slate-800">Join a club</h2>
       <div className="mt-3 space-y-2">
