@@ -45,7 +45,7 @@ export function FeaturedBooksManager() {
 
   return (
     <div className="mt-10 rounded-xl bg-white p-6 shadow-sm">
-      <h2 className="font-semibold">Featured books (shown on kids' Discover page)</h2>
+      <h2 className="font-semibold">Featured books (shown on kids&apos; Discover page)</h2>
 
       <div className="mt-3 flex flex-wrap gap-2">
         {featured.map((b) => (
