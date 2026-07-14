@@ -40,6 +40,7 @@ export function ShelfClient({ userId }: { userId: string }) {
   const [minutes, setMinutes] = useState("");
   const [pages, setPages] = useState("");
   const [progress, setProgress] = useState("");
+  const [markFinished, setMarkFinished] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,7 +81,7 @@ export function ShelfClient({ userId }: { userId: string }) {
     }
   }
 
-  async function logSession(markFinished = false) {
+  async function logSession() {
     if (!logBook) return;
     const res = await fetch("/api/reading/log", {
       method: "POST",
@@ -102,6 +103,7 @@ export function ShelfClient({ userId }: { userId: string }) {
     setMinutes("");
     setPages("");
     setProgress("");
+    setMarkFinished(false);
     load();
   }
 
@@ -171,6 +173,7 @@ export function ShelfClient({ userId }: { userId: string }) {
                         onClick={() => {
                           setLogBook(ub);
                           setProgress(String(ub.progress_percent));
+                          setMarkFinished(false);
                         }}
                       >
                         Log session
@@ -181,6 +184,7 @@ export function ShelfClient({ userId }: { userId: string }) {
                         onClick={() => {
                           setLogBook(ub);
                           setProgress("100");
+                          setMarkFinished(true);
                         }}
                       >
                         Finish book
@@ -273,16 +277,21 @@ export function ShelfClient({ userId }: { userId: string }) {
                 value={progress}
                 onChange={(e) => setProgress(e.target.value)}
               />
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={markFinished}
+                  onChange={(e) => setMarkFinished(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300"
+                />
+                I finished this book!
+              </label>
             </div>
             <div className="mt-4 flex gap-2">
               <Button variant="secondary" onClick={() => setLogBook(null)}>
                 Cancel
               </Button>
-              <Button
-                variant="kids"
-                fullWidth
-                onClick={() => logSession(Number(progress) >= 100)}
-              >
+              <Button variant="kids" fullWidth onClick={logSession}>
                 Save
               </Button>
             </div>

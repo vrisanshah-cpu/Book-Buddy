@@ -43,11 +43,7 @@ export async function POST(request: Request) {
     updates.status = "finished";
     updates.progress_percent = 100;
     updates.finished_at = new Date().toISOString();
-  } else if (updates.progress_percent != null && Number(updates.progress_percent) >= 100) {
-    updates.status = "finished";
-    updates.finished_at = new Date().toISOString();
   }
-
   if (userBookId && Object.keys(updates).length > 0) {
     await supabase.from("user_books").update(updates).eq("id", userBookId);
   }
