@@ -1,13 +1,15 @@
 import Script from "next/script";
 
-/** Only ever used in the parent and teacher layouts — never the kids layout. */
-export function GoogleAdsense() {
+export const ADSENSE_CLIENT_ID = "ca-pub-7877782569997046";
+
+/** Injected in root layout `<head>` on every page via Next.js App Router. */
+export function AdSense() {
   return (
     <Script
       async
-      src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7877782569997046"
+      src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT_ID}`}
       crossOrigin="anonymous"
-      strategy="afterInteractive"
+      strategy="beforeInteractive"
     />
   );
 }

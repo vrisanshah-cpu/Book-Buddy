@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Nunito, Fredoka, Plus_Jakarta_Sans, DM_Sans } from "next/font/google";
 import { GoogleAnalytics } from "@/components/analytics/GoogleAnalytics";
+import { AdSense } from "@/components/analytics/GoogleAdsense";
 import "./globals.css";
 
 const nunito = Nunito({
@@ -42,6 +43,7 @@ export default function RootLayout({
     >
       <body className="font-sans antialiased">
         <GoogleAnalytics />
+        <AdSense />
         {children}
       </body>
     </html>
