@@ -169,18 +169,19 @@ export default function RegisterPage() {
             onChange={(e) => setEmail(e.target.value)}
           />
           <Input
-            id="password"
-            label="Password"
-            type="password"
-            required
-            minLength={6}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setStep(1)}>
-              Back
-            </Button>
+  id="password"
+  label="Password"
+  type="password"
+  required
+  minLength={6}
+  value={password}
+  onChange={(e) => setPassword(e.target.value)}
+/>
+{error && <p className="text-sm text-red-600">{error}</p>}
+<div className="flex gap-2">
+  <Button variant="secondary" onClick={() => setStep(1)}>
+    Back
+  </Button>
             <Button
               variant="kids"
               fullWidth
