@@ -32,6 +32,7 @@ export default function RegisterPage() {
   const [schoolName, setSchoolName] = useState("");
   const [gradeLevels, setGradeLevels] = useState("");
   const [childUsername, setChildUsername] = useState("");
+  const [childPassword, setChildPassword] = useState("");
   const [childName, setChildName] = useState("");
   const [childAge, setChildAge] = useState("");
   const [childAvatar, setChildAvatar] = useState(AVATARS[0]);
@@ -77,6 +78,7 @@ export default function RegisterPage() {
         body: JSON.stringify({
           parentId: data.user.id,
           username: childUsername,
+          password: childPassword,
           displayName: childName,
           age: parseInt(childAge, 10) || 8,
           avatarUrl: childAvatar,
@@ -169,19 +171,19 @@ export default function RegisterPage() {
             onChange={(e) => setEmail(e.target.value)}
           />
           <Input
-  id="password"
-  label="Password"
-  type="password"
-  required
-  minLength={6}
-  value={password}
-  onChange={(e) => setPassword(e.target.value)}
-/>
-{error && <p className="text-sm text-red-600">{error}</p>}
-<div className="flex gap-2">
-  <Button variant="secondary" onClick={() => setStep(1)}>
-    Back
-  </Button>
+            id="password"
+            label="Password"
+            type="password"
+            required
+            minLength={6}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setStep(1)}>
+              Back
+            </Button>
             <Button
               variant="kids"
               fullWidth
@@ -249,6 +251,14 @@ export default function RegisterPage() {
                 onChange={(e) => setChildUsername(e.target.value)}
               />
               <Input
+                id="childPassword"
+                label="Password (for login)"
+                type="password"
+                minLength={6}
+                value={childPassword}
+                onChange={(e) => setChildPassword(e.target.value)}
+              />
+              <Input
                 id="childAge"
                 label="Age"
                 type="number"
@@ -281,7 +291,15 @@ export default function RegisterPage() {
             <Button variant="secondary" onClick={() => setStep(2)}>
               Back
             </Button>
-            <Button variant="kids" fullWidth disabled={loading} onClick={handleRegister}>
+            <Button
+              variant="kids"
+              fullWidth
+              disabled={
+                loading ||
+                (addChild && childUsername && childName ? childPassword.length < 6 : false)
+              }
+              onClick={handleRegister}
+            >
               {loading ? "Creating…" : "Create account"}
             </Button>
           </div>
