@@ -7,8 +7,7 @@ import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-violet-100 via-white to-teal-50 font-kids">
-    <div className="min-h-screen bg-gradient-to-b from-violet-100 via-white to-teal-50 font-kids">
-    <GoogleAdsense />
+      <GoogleAdsense />
       <header className="mx-auto flex max-w-5xl items-center justify-between px-6 py-6">
         <span className="font-kids-display text-2xl font-bold text-kids-purple">
           📚 Book Buddy
