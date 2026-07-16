@@ -68,17 +68,23 @@ async function addBook(book: OpenLibraryBook, status: string) {
         Search and add books to your child&apos;s shelf.
       </p>
 
-      <select
-        className="mt-4 rounded-lg border px-4 py-2"
-        value={selectedChild}
-        onChange={(e) => setSelectedChild(e.target.value)}
-      >
-        {linkedChildren.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.display_name}
-          </option>
-        ))}
-      </select>
+     {linkedChildren.length === 0 ? (
+        <p className="mt-4 rounded-lg bg-amber-50 p-4 text-amber-800">
+          You don&apos;t have a child linked yet — add one in Settings first, then come back here.
+        </p>
+      ) : (
+        <select
+          className="mt-4 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-4 py-2"
+          value={selectedChild}
+          onChange={(e) => setSelectedChild(e.target.value)}
+        >
+          {linkedChildren.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.display_name}
+            </option>
+          ))}
+        </select>
+      )}
 
       <div className="mt-6 flex gap-2">
         <Input
