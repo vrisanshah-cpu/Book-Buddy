@@ -116,17 +116,25 @@ async function addBook(book: OpenLibraryBook, status: string) {
         ))}
       </div>
 
-      <h2 className="mt-10 font-semibold">{selectedProfile?.display_name}&apos;s shelf</h2>
-      <div className="mt-3 space-y-2">
-        {shelf.map((ub) => (
-          <div key={ub.id} className="rounded-lg bg-white p-3 shadow-sm">
-            <p className="font-medium">{ub.book.title}</p>
-            <p className="text-sm text-slate-500">
-              {ub.status.replace(/_/g, " ")} · {ub.progress_percent}%
-            </p>
+      {selectedProfile && (
+        <>
+          <h2 className="mt-10 font-semibold">{selectedProfile.display_name}&apos;s shelf</h2>
+          <div className="mt-3 space-y-2">
+            {shelf.length === 0 ? (
+              <p className="text-sm text-slate-500">No books on this shelf yet.</p>
+            ) : (
+              shelf.map((ub) => (
+                <div key={ub.id} className="rounded-lg bg-white p-3 shadow-sm">
+                  <p className="font-medium">{ub.book.title}</p>
+                  <p className="text-sm text-slate-500">
+                    {ub.status.replace(/_/g, " ")} · {ub.progress_percent}%
+                  </p>
+                </div>
+              ))
+            )}
           </div>
-        ))}
-      </div>
+        </>
+      )}
     </div>
   );
 }

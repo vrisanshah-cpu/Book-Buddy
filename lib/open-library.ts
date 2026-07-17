@@ -33,8 +33,12 @@ export async function searchOpenLibrary(
   );
 }
 export async function searchByAuthor(author: string): Promise<OpenLibraryBook[]> {
+  // Use the dedicated `author` field param instead of a quoted `author:"..."`
+  // phrase in `q`. The quoted form requires an exact token-for-token match, so
+  // it fails on punctuation differences ("JK" vs "J. K.") and typos. The plain
+  // `author` param runs Open Library's normal (fuzzier) relevance search.
   const res = await fetch(
-    `https://openlibrary.org/search.json?q=${encodeURIComponent(`author:"${author}"`)}&limit=20`
+    `https://openlibrary.org/search.json?author=${encodeURIComponent(author)}&limit=20`
   );
   if (!res.ok) return [];
 

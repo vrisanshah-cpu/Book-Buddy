@@ -6,6 +6,7 @@ import { getLevel, xpProgressInLevel } from "@/lib/xp";
 import { calculateStreak } from "@/lib/reading-stats";
 import { Button } from "@/components/ui/Button";
 import { JoinClassroomCard } from "@/components/kids/JoinClassroomCard";
+import { ParentLinkCodeCard } from "@/components/kids/ParentLinkCodeCard";
 
 export default async function KidsHomePage() {
   const { user, profile } = await getProfile();
@@ -31,6 +32,14 @@ export default async function KidsHomePage() {
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  const { data: parentLinks } = await supabase
+    .from("parent_child")
+    .select("parent_id")
+    .eq("child_id", user.id)
+    .limit(1);
+
+  const hasParentLinked = (parentLinks ?? []).length > 0;
 
   const { data: activeChallenges } = await supabase
     .from("user_challenges")
@@ -161,6 +170,7 @@ export default async function KidsHomePage() {
       )}
 
       <JoinClassroomCard />
+      {!hasParentLinked && <ParentLinkCodeCard />}
 
       <section className="mt-8">
         <h2 className="font-kids-display text-xl font-bold text-slate-900">Quick links</h2>
