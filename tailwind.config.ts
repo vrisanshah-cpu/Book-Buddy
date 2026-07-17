@@ -16,6 +16,11 @@ const config: Config = {
           pink: "#F472B6",
           bg: "#F5F3FF",
         },
+        landing: {
+          paper: "#FFFBF3",
+          ink: "#241748",
+          wood: "#5C3A21",
+        },
         parent: {
           primary: "#3B82F6",
           muted: "#64748B",

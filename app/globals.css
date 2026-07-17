@@ -17,3 +17,79 @@ body {
     text-wrap: balance;
   }
 }
+
+/* Landing page signature: the animated bookshelf in the hero. */
+@keyframes landing-book-in {
+  0% {
+    opacity: 0;
+    transform: translateY(22px) scaleY(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+@keyframes landing-badge-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.5);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes landing-pip-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px) rotate(-2deg);
+  }
+}
+
+@keyframes landing-sparkle {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}
+
+.landing-book {
+  transform-origin: bottom;
+  animation: landing-book-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.landing-badge {
+  animation: landing-badge-pop 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.landing-pip {
+  animation: landing-pip-bob 3.4s ease-in-out infinite;
+}
+
+.landing-sparkle {
+  animation: landing-sparkle 4.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-book,
+  .landing-badge,
+  .landing-pip,
+  .landing-sparkle {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
