@@ -6,6 +6,14 @@ import { searchOpenLibrary, type OpenLibraryBook } from "@/lib/open-library";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
+type ListBookItem = {
+  id: string;
+  book_id: string;
+  title: string;
+  author: string;
+  cover_url: string | null;
+};
+
 export function TeacherBookListsClient({
   teacherId,
   classrooms,
@@ -17,9 +25,7 @@ export function TeacherBookListsClient({
   const [lists, setLists] = useState<{ id: string; name: string }[]>([]);
   const [listName, setListName] = useState("");
   const [selectedList, setSelectedList] = useState("");
-  const [listBooks, setListBooks] = useState
-    { id: string; book_id: string; title: string; author: string; cover_url: string | null }[]
-  >([]);
+  const [listBooks, setListBooks] = useState<ListBookItem[]>([]);
   const [classroomId, setClassroomId] = useState(classrooms[0]?.id ?? "");
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<OpenLibraryBook[]>([]);
