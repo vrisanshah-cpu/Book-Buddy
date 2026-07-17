@@ -187,9 +187,8 @@ export function ReadingGameClient({ userId }: { userId: string }) {
     <div>
       <h1 className="font-kids-display text-3xl font-bold">Reading Game</h1>
       <p className="mt-2 text-slate-600">Pick a book and answer 5 questions!</p>
-      </p>
 
-      {loading ? (
+{loading ? (
         <p className="mt-8">Generating quiz…</p>
       ) : (
         <div className="mt-6 space-y-2">
