@@ -18,8 +18,8 @@ export function TeacherBookListsClient({
   const [listName, setListName] = useState("");
   const [selectedList, setSelectedList] = useState("");
   const [listBooks, setListBooks] = useState
-  { id: string; book_id: string; title: string; author: string; cover_url: string | null }[]
->([]);
+    { id: string; book_id: string; title: string; author: string; cover_url: string | null }[]
+  >([]);
   const [classroomId, setClassroomId] = useState(classrooms[0]?.id ?? "");
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<OpenLibraryBook[]>([]);
