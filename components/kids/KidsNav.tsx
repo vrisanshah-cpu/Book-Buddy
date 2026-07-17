@@ -10,6 +10,7 @@ const links = [
   { href: "/kids/shelf", label: "Shelf", emoji: "📚" },
   { href: "/kids/discover", label: "Discover", emoji: "🔎" },
   { href: "/kids/challenges", label: "Challenges", emoji: "🏆" },
+  { href: "/kids/events", label: "Events", emoji: "🏅" },
   { href: "/kids/leaderboard", label: "Leaderboard", emoji: "🥇" },
   { href: "/kids/reading-game", label: "Game", emoji: "🎮" },
   { href: "/kids/booktok", label: "BookTok", emoji: "🎬" },

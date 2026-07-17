@@ -20,6 +20,7 @@ export interface UserProfile {
   school_name: string | null;
   grade_levels: string | null;
   is_admin: boolean;
+  equipped_title_id: string | null;
   created_at: string;
 }
 

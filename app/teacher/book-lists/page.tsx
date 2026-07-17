@@ -8,17 +8,11 @@ export default async function TeacherBookListsPage() {
   if (!user || profile?.role !== "teacher") redirect("/auth/login");
 
   const supabase = await createClient();
-  const { data: classrooms } = await supabase
-    .from("classrooms")
-    .select("id, name")
-    .eq("teacher_id", user.id);
+  const { data: classrooms } = await supabase.from("classrooms").select("id, name").eq("teacher_id", user.id);
 
   return (
     <>
-      <TeacherBookListsClient
-        teacherId={user.id}
-        classrooms={classrooms ?? []}
-      />
+      <TeacherBookListsClient teacherId={user.id} classrooms={classrooms ?? []} />
       <FeaturedBooksManager classrooms={classrooms ?? []} />
     </>
   );
