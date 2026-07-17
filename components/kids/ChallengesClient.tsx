@@ -30,6 +30,7 @@ export function ChallengesClient({ userId }: { userId: string }) {
   const load = useCallback(async () => {
     setLoading(true);
     await fetch("/api/challenges/enroll", { method: "POST" }).catch(() => {});
+    await fetch("/api/challenges/generate-personal", { method: "POST" }).catch(() => {});
 
     const { data } = await supabase
       .from("user_challenges")

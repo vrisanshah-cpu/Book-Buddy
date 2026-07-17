@@ -17,30 +17,14 @@ export async function POST(request: Request) {
       post_id: postId,
       user_id: user.id,
     });
-    const { data: post } = await supabase
-      .from("booktok_posts")
-      .select("likes")
-      .eq("id", postId)
-      .single();
-    await supabase
-      .from("booktok_posts")
-      .update({ likes: (post?.likes ?? 0) + 1 })
-      .eq("id", postId);
+    await supabase.rpc("adjust_booktok_likes", { p_post_id: postId, p_delta: 1 });
   } else {
     await supabase
       .from("booktok_likes")
       .delete()
       .eq("post_id", postId)
       .eq("user_id", user.id);
-    const { data: post } = await supabase
-      .from("booktok_posts")
-      .select("likes")
-      .eq("id", postId)
-      .single();
-    await supabase
-      .from("booktok_posts")
-      .update({ likes: Math.max(0, (post?.likes ?? 1) - 1) })
-      .eq("id", postId);
+    await supabase.rpc("adjust_booktok_likes", { p_post_id: postId, p_delta: -1 });
   }
 
   return NextResponse.json({ success: true });

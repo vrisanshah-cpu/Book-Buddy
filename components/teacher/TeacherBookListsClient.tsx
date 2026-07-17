@@ -17,6 +17,9 @@ export function TeacherBookListsClient({
   const [lists, setLists] = useState<{ id: string; name: string }[]>([]);
   const [listName, setListName] = useState("");
   const [selectedList, setSelectedList] = useState("");
+  const [listBooks, setListBooks] = useState
+    { id: string; book_id: string; title: string; author: string; cover_url: string | null }[]
+  >([]);
   const [classroomId, setClassroomId] = useState(classrooms[0]?.id ?? "");
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<OpenLibraryBook[]>([]);
@@ -32,6 +35,30 @@ export function TeacherBookListsClient({
         if (data?.[0]) setSelectedList(data[0].id);
       });
   }, [teacherId, supabase]);
+
+  useEffect(() => {
+    if (!selectedList) {
+      setListBooks([]);
+      return;
+    }
+    supabase
+      .from("book_list_items")
+      .select("id, book_id, book:books(title, author, cover_url)")
+      .eq("list_id", selectedList)
+      .then(({ data }) => {
+        const rows = (data ?? []).map((row) => {
+          const b = Array.isArray(row.book) ? row.book[0] : row.book;
+          return {
+            id: row.id,
+            book_id: row.book_id,
+            title: (b as { title: string })?.title ?? "Untitled",
+            author: (b as { author: string })?.author ?? "",
+            cover_url: (b as { cover_url: string | null })?.cover_url ?? null,
+          };
+        });
+        setListBooks(rows);
+      });
+  }, [selectedList, supabase]);
 
   async function createList() {
     const { data } = await supabase
@@ -69,12 +96,24 @@ export function TeacherBookListsClient({
       .single();
 
     if (book) {
-      await supabase.from("book_list_items").upsert({
-        list_id: selectedList,
-        book_id: book.id,
-      });
+      const { data: item } = await supabase
+        .from("book_list_items")
+        .upsert({ list_id: selectedList, book_id: book.id })
+        .select("id, book_id")
+        .single();
+      if (item) {
+        setListBooks((prev) => [
+          ...prev,
+          { id: item.id, book_id: item.book_id, title: b.title, author: b.author, cover_url: b.cover_url ?? null },
+        ]);
+      }
       setSearchResults(searchResults.filter((r) => r.title !== b.title));
     }
+  }
+
+  async function removeBookFromList(itemId: string) {
+    await supabase.from("book_list_items").delete().eq("id", itemId);
+    setListBooks((prev) => prev.filter((i) => i.id !== itemId));
   }
 
   async function assignToClass() {
@@ -148,6 +187,36 @@ export function TeacherBookListsClient({
           ))}
         </div>
       )}
+
+      <div className="mt-6">
+        <h2 className="font-semibold text-slate-800">
+          Books in {lists.find((l) => l.id === selectedList)?.name ?? "this list"}
+        </h2>
+        {listBooks.length === 0 ? (
+          <p className="mt-2 text-sm text-slate-500">No books added to this list yet.</p>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {listBooks.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center justify-between gap-2 rounded-lg border p-3"
+              >
+                <div className="min-w-0">
+                  <p className="font-semibold truncate">{item.title}</p>
+                  <p className="text-sm text-slate-500">{item.author}</p>
+                </div>
+                <Button
+                  variant="secondary"
+                  className="!px-3 !py-1.5 !text-xs shrink-0"
+                  onClick={() => removeBookFromList(item.id)}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="mt-6 flex gap-2 items-center">
         <select

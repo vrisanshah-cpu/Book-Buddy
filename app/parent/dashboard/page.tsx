@@ -29,23 +29,28 @@ export default async function ParentDashboardPage() {
         age: number | null;
       };
 
-      const { data: sessions } = await supabase
-        .from("reading_sessions")
-        .select("date, minutes_read")
-        .eq("user_id", child.id);
+      const historyStart = new Date();
+      historyStart.setDate(historyStart.getDate() - 370);
 
-      const { count: booksMonth } = await supabase
-        .from("user_books")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", child.id)
-        .eq("status", "finished")
-        .gte("finished_at", monthStart.toISOString());
-
-      const { data: activeChallenges } = await supabase
-        .from("user_challenges")
-        .select("id")
-        .eq("user_id", child.id)
-        .eq("completed", false);
+      const [{ data: sessions }, { count: booksMonth }, { data: activeChallenges }] =
+        await Promise.all([
+          supabase
+            .from("reading_sessions")
+            .select("date, minutes_read")
+            .eq("user_id", child.id)
+            .gte("date", historyStart.toISOString().split("T")[0]),
+          supabase
+            .from("user_books")
+            .select("*", { count: "exact", head: true })
+            .eq("user_id", child.id)
+            .eq("status", "finished")
+            .gte("finished_at", monthStart.toISOString()),
+          supabase
+            .from("user_challenges")
+            .select("id")
+            .eq("user_id", child.id)
+            .eq("completed", false),
+        ]);
 
       return {
         child,

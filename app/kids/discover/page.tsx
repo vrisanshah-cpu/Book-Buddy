@@ -3,7 +3,7 @@ import { getProfile } from "@/lib/supabase/server";
 import { DiscoverClient } from "@/components/kids/DiscoverClient";
 
 export default async function DiscoverPage() {
-  const { user, profile } = await getProfile();
-  if (!user || profile?.role !== "kid") redirect("/auth/login");
+  const { user } = await getProfile();
+  if (!user) redirect("/auth/login");
   return <DiscoverClient />;
 }

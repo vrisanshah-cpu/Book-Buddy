@@ -118,7 +118,8 @@ export async function enrollInAvailableChallenges(
   const { data: challenges } = await supabase
     .from("challenges")
     .select("id")
-    .is("classroom_id", null);
+    .is("classroom_id", null)
+    .is("personalized_for", null);
 
   const toEnroll = (challenges ?? []).filter((c) => !existingIds.has(c.id));
 

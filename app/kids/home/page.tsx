@@ -41,10 +41,13 @@ export default async function KidsHomePage() {
 
   const quickLinks = [
     { href: "/kids/shelf", label: "My Shelf", emoji: "📚" },
+    { href: "/kids/discover", label: "Discover", emoji: "🔎" },
     { href: "/kids/challenges", label: "Challenges", emoji: "🏆" },
+    { href: "/kids/leaderboard", label: "Leaderboard", emoji: "🥇" },
     { href: "/kids/reading-game", label: "Reading Game", emoji: "🎮" },
     { href: "/kids/book-club", label: "Book Club", emoji: "👥" },
     { href: "/kids/booktok", label: "BookTok", emoji: "🎬" },
+    { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
   ];
 
   const bookData = Array.isArray(currentBook?.book)
