@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import Filter from "bad-words";
+import { containsProfanity } from "@/lib/profanity-filter";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -27,8 +27,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Nickname must be 2-20 characters" }, { status: 400 });
   }
 
-  const filter = new Filter();
-  if (filter.isProfane(trimmed)) {
+  if (containsProfanity(trimmed)) {
     return NextResponse.json(
       { error: "That nickname isn't allowed — try something else!" },
       { status: 400 }

@@ -1,4 +1,5 @@
-/** Fallback quiz when ANTHROPIC_API_KEY is not set (beta / local dev). */
+
+/** Fallback quiz when GEMINI_API_KEY is not set, or the Gemini call fails. */
 export function buildDemoQuiz(title: string, author: string) {
   const t = title.slice(0, 40);
   const a = author.slice(0, 30);

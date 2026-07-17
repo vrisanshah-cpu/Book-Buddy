@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
 type ListBookItem = {
-  id: string;
   book_id: string;
   title: string;
   author: string;
@@ -49,13 +48,12 @@ export function TeacherBookListsClient({
     }
     supabase
       .from("book_list_items")
-      .select("id, book_id, book:books(title, author, cover_url)")
+      .select("book_id, book:books(title, author, cover_url)")
       .eq("list_id", selectedList)
       .then(({ data }) => {
         const rows = (data ?? []).map((row) => {
           const b = Array.isArray(row.book) ? row.book[0] : row.book;
           return {
-            id: row.id,
             book_id: row.book_id,
             title: (b as { title: string })?.title ?? "Untitled",
             author: (b as { author: string })?.author ?? "",
@@ -102,24 +100,29 @@ export function TeacherBookListsClient({
       .single();
 
     if (book) {
-      const { data: item } = await supabase
+      const { error } = await supabase
         .from("book_list_items")
-        .upsert({ list_id: selectedList, book_id: book.id })
-        .select("id, book_id")
-        .single();
-      if (item) {
+        .upsert({ list_id: selectedList, book_id: book.id });
+
+      if (!error) {
         setListBooks((prev) => [
           ...prev,
-          { id: item.id, book_id: item.book_id, title: b.title, author: b.author, cover_url: b.cover_url ?? null },
+          { book_id: book.id, title: b.title, author: b.author, cover_url: b.cover_url ?? null },
         ]);
+      } else {
+        alert("Couldn't add book to list: " + error.message);
       }
       setSearchResults(searchResults.filter((r) => r.title !== b.title));
     }
   }
 
-  async function removeBookFromList(itemId: string) {
-    await supabase.from("book_list_items").delete().eq("id", itemId);
-    setListBooks((prev) => prev.filter((i) => i.id !== itemId));
+  async function removeBookFromList(bookId: string) {
+    await supabase
+      .from("book_list_items")
+      .delete()
+      .eq("list_id", selectedList)
+      .eq("book_id", bookId);
+    setListBooks((prev) => prev.filter((i) => i.book_id !== bookId));
   }
 
   async function assignToClass() {
@@ -204,7 +207,7 @@ export function TeacherBookListsClient({
           <div className="mt-2 space-y-2">
             {listBooks.map((item) => (
               <div
-                key={item.id}
+                key={item.book_id}
                 className="flex items-center justify-between gap-2 rounded-lg border p-3"
               >
                 <div className="min-w-0">
@@ -214,7 +217,7 @@ export function TeacherBookListsClient({
                 <Button
                   variant="secondary"
                   className="!px-3 !py-1.5 !text-xs shrink-0"
-                  onClick={() => removeBookFromList(item.id)}
+                  onClick={() => removeBookFromList(item.book_id)}
                 >
                   Remove
                 </Button>

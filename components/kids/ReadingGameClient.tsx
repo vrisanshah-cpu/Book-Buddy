@@ -24,8 +24,7 @@ export function ReadingGameClient({ userId }: { userId: string }) {
   const [step, setStep] = useState<"pick" | "quiz" | "done">("pick");
   const [score, setScore] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [demoMode, setDemoMode] = useState(false);
-  const [leaderboard, setLeaderboard] = useState<
+  const [leaderboard, setLeaderboard] = useState
     { display_name: string; score: number }[]
   >([]);
 
@@ -91,7 +90,6 @@ export function ReadingGameClient({ userId }: { userId: string }) {
     setLoading(false);
     if (data.questions) {
       setQuestions(data.questions);
-      setDemoMode(Boolean(data.mock));
       setStep("quiz");
       setAnswers({});
     } else if (data.error) {
@@ -140,11 +138,6 @@ export function ReadingGameClient({ userId }: { userId: string }) {
     return (
       <div>
         <h1 className="font-kids-display text-2xl font-bold">{selected?.book.title}</h1>
-        {demoMode && (
-          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Demo quiz mode — add ANTHROPIC_API_KEY later for book-specific questions.
-          </p>
-        )}
         <div className="mt-6 space-y-6">
           {questions.map((q, i) => (
             <div key={i} className="rounded-2xl bg-white p-5 shadow-md">
