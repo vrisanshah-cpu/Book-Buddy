@@ -24,9 +24,9 @@ export function ReadingGameClient({ userId }: { userId: string }) {
   const [step, setStep] = useState<"pick" | "quiz" | "done">("pick");
   const [score, setScore] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [leaderboard, setLeaderboard] = useState
-    { display_name: string; score: number }[]
-  >([]);
+  const [leaderboard, setLeaderboard] = useState<
+  { display_name: string; score: number }[]
+>([]);
 
   useEffect(() => {
     supabase
