@@ -33,12 +33,16 @@ export async function POST(request: Request) {
     shelfUserId = targetUserId;
   }
 
-  const bookId = await ensureBook(
-    supabase,
-    { title, author, cover_url, description },
-    user.id
-  );
-  await addToShelf(supabase, shelfUserId, bookId, status as BookStatus);
-
-  return NextResponse.json({ bookId, success: true });
+  try {
+    const bookId = await ensureBook(
+      supabase,
+      { title, author, cover_url, description },
+      user.id
+    );
+    await addToShelf(supabase, shelfUserId, bookId, status as BookStatus);
+    return NextResponse.json({ bookId, success: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to add book";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

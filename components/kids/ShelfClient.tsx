@@ -66,7 +66,7 @@ export function ShelfClient({ userId }: { userId: string }) {
     setSearching(false);
   }
 
-  async function addBook(book: OpenLibraryBook, status: BookStatus) {
+async function addBook(book: OpenLibraryBook, status: BookStatus) {
     const res = await fetch("/api/books/shelf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -78,6 +78,9 @@ export function ShelfClient({ userId }: { userId: string }) {
       setSearchQuery("");
       if (status === tab) load();
       else setTab(status);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      alert("Couldn't add that book: " + (data.error ?? res.status));
     }
   }
 
