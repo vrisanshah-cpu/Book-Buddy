@@ -5,26 +5,20 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { searchOpenLibrary, type OpenLibraryBook } from "@/lib/open-library";
 
-interface Classroom {
-  id: string;
-  name: string;
-}
-
-export function FeaturedBooksManager({ classrooms }: { classrooms: Classroom[] }) {
-  const [classroomId, setClassroomId] = useState(classrooms[0]?.id ?? "");
+export function AdminFeaturedManager() {
   const [featured, setFeatured] = useState<{ id: string; title: string; author: string }[]>([]);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<OpenLibraryBook[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (classroomId) load(classroomId);
-  }, [classroomId]);
+    load();
+  }, []);
 
-  async function load(forClassroomId: string) {
-    const res = await fetch(`/api/books/featured?classroomId=${forClassroomId}`);
+  async function load() {
+    const res = await fetch("/api/admin/featured");
     if (!res.ok) {
-      setError("Couldn't load your featured books.");
+      setError("Couldn't load featured books.");
       return;
     }
     const data = await res.json();
@@ -36,14 +30,14 @@ export function FeaturedBooksManager({ classrooms }: { classrooms: Classroom[] }
   }
 
   async function feature(book: OpenLibraryBook) {
-    const res = await fetch("/api/books/featured", {
+    const res = await fetch("/api/admin/featured", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...book, classroomId }),
+      body: JSON.stringify(book),
     });
     if (res.ok) {
       setError("");
-      load(classroomId);
+      load();
     } else {
       const data = await res.json().catch(() => ({}));
       setError(data.error ?? "Couldn't feature that book.");
@@ -51,59 +45,38 @@ export function FeaturedBooksManager({ classrooms }: { classrooms: Classroom[] }
   }
 
   async function unfeature(bookId: string) {
-    const res = await fetch("/api/books/featured", {
+    const res = await fetch("/api/admin/featured", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bookId, classroomId }),
+      body: JSON.stringify({ bookId, featured: false }),
     });
     if (res.ok) {
       setError("");
-      load(classroomId);
+      load();
     } else {
       setError("Couldn't unfeature that book.");
     }
   }
 
-  if (classrooms.length === 0) {
-    return (
-      <div className="mt-10 rounded-xl bg-white p-6 shadow-sm">
-        <h2 className="font-semibold">Featured books (shown on your students&apos; Discover page)</h2>
-        <p className="mt-2 text-sm text-slate-500">
-          Create a classroom first, then come back here to feature books for it.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="mt-10 rounded-xl bg-white p-6 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="font-semibold">Featured books (shown on your students&apos; Discover page)</h2>
-        {classrooms.length > 1 && (
-          <select
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
-            value={classroomId}
-            onChange={(e) => setClassroomId(e.target.value)}
-          >
-            {classrooms.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-        )}
-      </div>
+    <div className="rounded-xl bg-white p-6 shadow-sm">
+      <h1 className="text-xl font-bold text-slate-900">Featured Books</h1>
+      <p className="mt-1 text-sm text-slate-500">
+        Shown as &quot;Featured by Book Buddy&quot; to every kid, and on the logged-out landing page.
+      </p>
 
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
         {featured.map((b) => (
-          <span key={b.id} className="flex items-center gap-2 rounded-full bg-violet-100 px-3 py-1 text-sm">
+          <span key={b.id} className="flex items-center gap-2 rounded-full bg-indigo-100 px-3 py-1 text-sm">
             {b.title}
             <button type="button" onClick={() => unfeature(b.id)} className="text-slate-500 hover:text-red-500">
               ✕
             </button>
           </span>
         ))}
-        {featured.length === 0 && <p className="text-sm text-slate-500">No featured books yet for this class.</p>}
+        {featured.length === 0 && <p className="text-sm text-slate-500">No site-wide featured books yet.</p>}
       </div>
 
       <div className="mt-4 flex gap-2">

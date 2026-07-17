@@ -16,11 +16,6 @@ const config: Config = {
           pink: "#F472B6",
           bg: "#F5F3FF",
         },
-        landing: {
-          paper: "#FFFBF3",
-          ink: "#241748",
-          wood: "#5C3A21",
-        },
         parent: {
           primary: "#3B82F6",
           muted: "#64748B",
@@ -31,12 +26,18 @@ const config: Config = {
           muted: "#6B7280",
           bg: "#F9FAFB",
         },
+        admin: {
+          primary: "#0F172A",
+          muted: "#64748B",
+          bg: "#F1F5F9",
+        },
       },
       fontFamily: {
         kids: ["var(--font-nunito)", "sans-serif"],
         "kids-display": ["var(--font-fredoka)", "sans-serif"],
         parent: ["var(--font-jakarta)", "sans-serif"],
         teacher: ["var(--font-dm-sans)", "sans-serif"],
+        admin: ["var(--font-dm-sans)", "sans-serif"],
       },
     },
   },

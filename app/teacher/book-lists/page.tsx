@@ -13,13 +13,13 @@ export default async function TeacherBookListsPage() {
     .select("id, name")
     .eq("teacher_id", user.id);
 
-    return (
-      <>
-        <TeacherBookListsClient
-          teacherId={user.id}
-          classrooms={classrooms ?? []}
-        />
-        <FeaturedBooksManager />
-      </>
-    );
-  }
+  return (
+    <>
+      <TeacherBookListsClient
+        teacherId={user.id}
+        classrooms={classrooms ?? []}
+      />
+      <FeaturedBooksManager classrooms={classrooms ?? []} />
+    </>
+  );
+}

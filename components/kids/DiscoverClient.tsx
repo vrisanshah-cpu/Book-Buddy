@@ -39,6 +39,28 @@ function WhereToFind({ title, author }: { title: string; author: string }) {
   );
 }
 
+function FeaturedCard({
+  book,
+  isAdded,
+  onAdd,
+}: {
+  book: FeaturedBook;
+  isAdded: boolean;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="rounded-2xl bg-white p-4 shadow-md">
+      <p className="font-bold">{book.title}</p>
+      <p className="text-sm text-slate-500">{book.author}</p>
+      {book.description && <p className="mt-2 text-sm text-slate-600 line-clamp-2">{book.description}</p>}
+      <WhereToFind title={book.title} author={book.author} />
+      <Button variant="secondary" className="mt-3 !text-xs" onClick={onAdd} disabled={isAdded}>
+        {isAdded ? "Added ✓" : "+ Want to read"}
+      </Button>
+    </div>
+  );
+}
+
 export function DiscoverClient() {
   const [tab, setTab] = useState<"recommended" | "featured" | "author">("recommended");
 
@@ -48,8 +70,11 @@ export function DiscoverClient() {
   const [locked, setLocked] = useState(false);
   const [added, setAdded] = useState<Set<string>>(new Set());
 
-  const [featured, setFeatured] = useState<FeaturedBook[]>([]);
+  const [adminFeatured, setAdminFeatured] = useState<FeaturedBook[]>([]);
+  const [classroomFeatured, setClassroomFeatured] = useState<FeaturedBook[]>([]);
+  const [inClassroom, setInClassroom] = useState(false);
   const [loadedFeatured, setLoadedFeatured] = useState(false);
+  const [featuredError, setFeaturedError] = useState("");
 
   const [authorQuery, setAuthorQuery] = useState("");
   const [authorResults, setAuthorResults] = useState<AuthorBook[]>([]);
@@ -73,9 +98,25 @@ export function DiscoverClient() {
   }
 
   async function loadFeatured() {
-    const res = await fetch("/api/books/featured");
-    const data = await res.json();
-    setFeatured(data.books ?? []);
+    setFeaturedError("");
+    const [adminRes, classroomRes] = await Promise.all([
+      fetch("/api/admin/featured"),
+      fetch("/api/books/featured"),
+    ]);
+
+    if (adminRes.ok) {
+      const data = await adminRes.json();
+      setAdminFeatured(data.books ?? []);
+    } else {
+      setFeaturedError("Couldn't load featured books right now.");
+    }
+
+    if (classroomRes.ok) {
+      const data = await classroomRes.json();
+      setClassroomFeatured(data.books ?? []);
+      setInClassroom(Boolean(data.classroomId));
+    }
+
     setLoadedFeatured(true);
   }
 
@@ -164,29 +205,44 @@ export function DiscoverClient() {
       )}
 
       {tab === "featured" && (
-        <section className="mt-6">
-          <h2 className="font-bold text-slate-800">Featured by your teacher</h2>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            {featured.map((b) => (
-              <div key={b.id} className="rounded-2xl bg-white p-4 shadow-md">
-                <p className="font-bold">{b.title}</p>
-                <p className="text-sm text-slate-500">{b.author}</p>
-                {b.description && <p className="mt-2 text-sm text-slate-600 line-clamp-2">{b.description}</p>}
-                <WhereToFind title={b.title} author={b.author} />
-                <Button
-                  variant="secondary"
-                  className="mt-3 !text-xs"
-                  onClick={() => addToWantToRead(b.title, b.author)}
-                  disabled={added.has(b.title)}
-                >
-                  {added.has(b.title) ? "Added ✓" : "+ Want to read"}
-                </Button>
-              </div>
-            ))}
-            {featured.length === 0 && (
-              <p className="text-slate-500">No featured books yet — check back soon!</p>
-            )}
+        <section className="mt-6 space-y-8">
+          {featuredError && <p className="text-sm text-red-600">{featuredError}</p>}
+
+          <div>
+            <h2 className="font-bold text-slate-800">Featured by Book Buddy</h2>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {adminFeatured.map((b) => (
+                <FeaturedCard
+                  key={b.id}
+                  book={b}
+                  isAdded={added.has(b.title)}
+                  onAdd={() => addToWantToRead(b.title, b.author)}
+                />
+              ))}
+              {adminFeatured.length === 0 && (
+                <p className="text-slate-500">No site-wide picks yet — check back soon!</p>
+              )}
+            </div>
           </div>
+
+          {inClassroom && (
+            <div>
+              <h2 className="font-bold text-slate-800">Featured by your teacher</h2>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {classroomFeatured.map((b) => (
+                  <FeaturedCard
+                    key={b.id}
+                    book={b}
+                    isAdded={added.has(b.title)}
+                    onAdd={() => addToWantToRead(b.title, b.author)}
+                  />
+                ))}
+                {classroomFeatured.length === 0 && (
+                  <p className="text-slate-500">Your teacher hasn&apos;t featured any books yet.</p>
+                )}
+              </div>
+            </div>
+          )}
         </section>
       )}
 

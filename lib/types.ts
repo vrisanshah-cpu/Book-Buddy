@@ -19,6 +19,7 @@ export interface UserProfile {
   xp: number;
   school_name: string | null;
   grade_levels: string | null;
+  is_admin: boolean;
   created_at: string;
 }
 
