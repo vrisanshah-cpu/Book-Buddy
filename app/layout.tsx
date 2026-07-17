@@ -30,6 +30,9 @@ export const metadata: Metadata = {
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
   ),
+  other: {
+    "google-adsense-account": "ca-pub-7877782569997046",
+  },
 };
 
 export default function RootLayout({
