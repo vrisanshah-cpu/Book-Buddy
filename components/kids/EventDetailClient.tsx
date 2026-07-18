@@ -157,7 +157,7 @@ export function EventDetailClient({
         <div className="mt-6">
           {hasJoined ? (
             <div className="rounded-2xl bg-white/15 p-4">
-              <p className="font-kids-display text-lg font-bold">🎉 You're in!</p>
+              <p className="font-kids-display text-lg font-bold">🎉 You&apos;re in!</p>
               <div className="mt-2 h-3 overflow-hidden rounded-full bg-white/25">
                 <div
                   className="h-full rounded-full bg-white transition-all duration-500"

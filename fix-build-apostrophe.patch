@@ -1,0 +1,13 @@
+diff --git a/components/kids/EventDetailClient.tsx b/components/kids/EventDetailClient.tsx
+index e760726..aed2cc6 100644
+--- a/components/kids/EventDetailClient.tsx
++++ b/components/kids/EventDetailClient.tsx
+@@ -157,7 +157,7 @@ export function EventDetailClient({
+         <div className="mt-6">
+           {hasJoined ? (
+             <div className="rounded-2xl bg-white/15 p-4">
+-              <p className="font-kids-display text-lg font-bold">🎉 You're in!</p>
++              <p className="font-kids-display text-lg font-bold">🎉 You&apos;re in!</p>
+               <div className="mt-2 h-3 overflow-hidden rounded-full bg-white/25">
+                 <div
+                   className="h-full rounded-full bg-white transition-all duration-500"
