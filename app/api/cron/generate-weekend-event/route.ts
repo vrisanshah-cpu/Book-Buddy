@@ -7,6 +7,9 @@ import { validateGoalSpec, getUpcomingWeekendWindow } from "@/lib/weekend-events
 // Vercel Cron hits this on GET. Don't let Next.js cache this route.
 export const dynamic = "force-dynamic";
 
+// TEMP TEST — set to false (or remove this + the check below) once confirmed working
+const FORCE_GENERATION_DAY = true;
+
 function isAuthorized(request: Request) {
   const secret = process.env.CRON_SECRET;
   const received = request.headers.get("authorization");
@@ -59,7 +62,7 @@ export async function GET(request: Request) {
   // this day-of-week check is what actually enforces "once a week" rather
   // than the cron schedule itself. Only generate on Fridays (UTC), for the
   // upcoming Sat–Sun.
-  if (now.getUTCDay() !== 5) {
+  if (!FORCE_GENERATION_DAY && now.getUTCDay() !== 5) {
     return NextResponse.json({ ok: true, skipped: "not-generation-day" });
   }
 
@@ -87,7 +90,9 @@ export async function GET(request: Request) {
       { jsonMode: true }
     );
     parsed = validateGoalSpec(JSON.parse(raw));
-  } catch {
+  } catch (err) {
+    // TEMP DEBUG — surface why validation/parsing failed
+    console.log("DEBUG gemini/validation error:", err);
     parsed = null;
   }
 
