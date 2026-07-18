@@ -9,8 +9,16 @@ export const dynamic = "force-dynamic";
 
 function isAuthorized(request: Request) {
   const secret = process.env.CRON_SECRET;
+  const received = request.headers.get("authorization");
+
+  // TEMP DEBUG — remove after diagnosing the 401 issue
+  console.log("DEBUG expected secret length:", secret?.length);
+  console.log("DEBUG expected secret (raw):", JSON.stringify(secret));
+  console.log("DEBUG received header (raw):", JSON.stringify(received));
+  // END TEMP DEBUG
+
   if (!secret) return false;
-  return request.headers.get("authorization") === `Bearer ${secret}`;
+  return received === `Bearer ${secret}`;
 }
 
 const PROMPT = `Design ONE fun weekend reading contest for kids aged 5-12 using a reading app.
