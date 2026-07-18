@@ -196,7 +196,7 @@ export function CollectionClient({ userId }: { userId: string }) {
           ))}
           {activeOwnedList.length === 0 && (
             <p className="col-span-full text-center text-slate-500">
-              Nothing found yet — keep reading books by authors you've already unlocked!
+              Nothing found yet — keep reading books by authors you&apos;ve already unlocked!
             </p>
           )}
         </CardGrid>
