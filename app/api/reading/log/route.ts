@@ -4,6 +4,7 @@ import { awardXp, syncChallengeProgress } from "@/lib/challenges";
 import { XP_REWARDS } from "@/lib/xp";
 import { calculateStreak } from "@/lib/reading-stats";
 import { syncActiveEventProgress } from "@/lib/weekend-events";
+import { awardAuthorCardForFinishedBook } from "@/lib/author-cards";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -67,8 +68,27 @@ export async function POST(request: Request) {
   const streak = calculateStreak(sessions ?? []);
   const completedChallenges = await syncChallengeProgress(supabase, user.id);
 
+  let authorCard = null;
   if (finishedBook) {
     await syncActiveEventProgress(supabase, user.id);
+
+    try {
+      // "Boosted" = any weekend event is currently running, not specifically
+      // that this book qualifies for that event's goal -- keeps the boost
+      // simple (see chat) instead of re-running full goal-scoring here.
+      const { data: activeEvents } = await supabase
+        .from("weekend_events")
+        .select("id")
+        .eq("status", "active")
+        .limit(1);
+      const boosted = (activeEvents?.length ?? 0) > 0;
+
+      authorCard = await awardAuthorCardForFinishedBook(supabase, user.id, bookId, boosted);
+    } catch (err) {
+      // Bonus collectible layer -- never let it block XP/streak/challenge
+      // results the kid is waiting on.
+      console.log("DEBUG author card award error:", JSON.stringify({ err: String(err) }));
+    }
   }
 
   return NextResponse.json({
@@ -76,5 +96,6 @@ export async function POST(request: Request) {
     finishedBook,
     streak,
     completedChallenges,
+    authorCard,
   });
 }

@@ -9,6 +9,22 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import type { BookStatus } from "@/lib/types";
 
+interface AuthorCardReveal {
+  dropped: boolean;
+  isNewAuthor: boolean;
+  boosted: boolean;
+  serialCode?: string;
+  quantity?: number;
+  card: {
+    author_name: string;
+    fun_fact: string;
+    artifact_name: string | null;
+    artifact_description: string | null;
+    icon: string;
+    rarity: "common" | "rare" | "legendary";
+  };
+}
+
 interface ShelfBook {
   id: string;
   status: BookStatus;
@@ -41,6 +57,7 @@ export function ShelfClient({ userId }: { userId: string }) {
   const [pages, setPages] = useState("");
   const [progress, setProgress] = useState("");
   const [markFinished, setMarkFinished] = useState(false);
+  const [cardReveal, setCardReveal] = useState<AuthorCardReveal | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,6 +118,12 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
     const data = await res.json();
     if (markFinished || data.finishedBook) {
       confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
+    }
+    if (data.authorCard?.dropped) {
+      if (data.authorCard.card?.rarity === "legendary") {
+        confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ["#FBBF24", "#F59E0B", "#FFFFFF"] });
+      }
+      setCardReveal(data.authorCard as AuthorCardReveal);
     }
     setLogBook(null);
     setMinutes("");
@@ -298,6 +321,55 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
                 Save
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {cardReveal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            className={`w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl ring-4 ${
+              cardReveal.card.rarity === "legendary"
+                ? "ring-amber-300"
+                : cardReveal.card.rarity === "rare"
+                ? "ring-sky-300"
+                : "ring-slate-200"
+            }`}
+          >
+            <p className="text-xs font-bold uppercase tracking-wide text-kids-purple">
+              {cardReveal.isNewAuthor ? "New author card!" : cardReveal.boosted ? "Event bonus card!" : "Card found!"}
+            </p>
+            <span className="mt-2 block text-6xl">{cardReveal.card.icon}</span>
+            <p className="mt-2 font-kids-display text-xl font-bold text-slate-900">
+              {cardReveal.card.author_name}
+            </p>
+            <span
+              className={`mt-1 inline-block rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${
+                cardReveal.card.rarity === "legendary"
+                  ? "bg-amber-100 text-amber-700"
+                  : cardReveal.card.rarity === "rare"
+                  ? "bg-sky-100 text-sky-700"
+                  : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {cardReveal.card.rarity}
+            </span>
+            <p className="mt-3 text-sm text-slate-600">{cardReveal.card.fun_fact}</p>
+            {cardReveal.card.artifact_name && (
+              <p className="mt-2 text-sm text-slate-600">
+                <span className="font-semibold text-slate-800">🏺 {cardReveal.card.artifact_name}:</span>{" "}
+                {cardReveal.card.artifact_description}
+              </p>
+            )}
+            {cardReveal.serialCode && (
+              <p className="mt-3 font-mono text-xs text-slate-400">{cardReveal.serialCode}</p>
+            )}
+            {cardReveal.quantity && cardReveal.quantity > 1 && (
+              <p className="mt-1 text-xs text-slate-400">You now have {cardReveal.quantity} of this card.</p>
+            )}
+            <Button variant="kids" fullWidth onClick={() => setCardReveal(null)} className="mt-5">
+              Add to binder
+            </Button>
           </div>
         </div>
       )}
