@@ -8,7 +8,22 @@ import { validateGoalSpec, getUpcomingWeekendWindow } from "@/lib/weekend-events
 export const dynamic = "force-dynamic";
 
 // TEMP TEST — set to false (or remove this + the check below) once confirmed working
-const FORCE_GENERATION_DAY = true;
+const FORCE_GENERATION_DAY = false;
+
+const HOUSTON_TZ = "America/Chicago"; // Houston observes Central Time (handles CDT/CST automatically)
+
+// Returns the current day-of-week (0=Sun ... 6=Sat) in a given IANA timezone
+function getDayOfWeekInTimezone(date: Date, timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+  });
+  const weekdayStr = formatter.format(date); // "Mon", "Tue", etc.
+  const map: Record<string, number> = {
+    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+  };
+  return map[weekdayStr];
+}
 
 function isAuthorized(request: Request) {
   const secret = process.env.CRON_SECRET;
@@ -60,9 +75,9 @@ export async function GET(request: Request) {
 
   // Vercel Hobby only supports daily cron, so this route runs every day —
   // this day-of-week check is what actually enforces "once a week" rather
-  // than the cron schedule itself. Only generate on Fridays (UTC), for the
-  // upcoming Sat–Sun.
-  if (!FORCE_GENERATION_DAY && now.getUTCDay() !== 5) {
+  // than the cron schedule itself. Only generate on Fridays in Houston time,
+  // for the upcoming Sat–Sun.
+  if (!FORCE_GENERATION_DAY && getDayOfWeekInTimezone(now, HOUSTON_TZ) !== 5) {
     return NextResponse.json({ ok: true, skipped: "not-generation-day" });
   }
 
