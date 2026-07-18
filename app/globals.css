@@ -94,28 +94,37 @@ body {
   }
 }
 
-/* Author card binder: the "unpacking" reveal on /kids/shelf when a card drops. */
-@keyframes card-pack-idle-glow {
+/* Collectible card system: 8 rarity tiers driven by CSS custom properties
+   off ONE shared keyframe, so adding a 9th tier later is a 3-line addition
+   instead of a whole new @keyframes block. Used on both the pack-opening
+   reveal (/kids/shelf) and the binder (/kids/collection). */
+@keyframes card-glow-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 rgba(124, 58, 237, 0);
+    box-shadow: 0 0 0 rgba(0, 0, 0, 0);
     transform: scale(1) rotate(0deg);
   }
   50% {
-    box-shadow: 0 0 28px 6px rgba(124, 58, 237, 0.35);
-    transform: scale(1.03) rotate(-1deg);
+    box-shadow: 0 0 var(--glow-spread, 24px) var(--glow-blur, 4px) var(--glow-color, rgba(148, 163, 184, 0.35));
+    transform: scale(var(--glow-scale, 1.02)) rotate(var(--glow-rotate, 0deg));
   }
 }
 
-@keyframes card-pack-idle-glow-legendary {
-  0%,
-  100% {
-    box-shadow: 0 0 0 rgba(251, 191, 36, 0);
-    transform: scale(1) rotate(0deg);
+@keyframes card-holo-sweep {
+  0% {
+    background-position: -150% 0;
   }
-  50% {
-    box-shadow: 0 0 36px 10px rgba(251, 191, 36, 0.55);
-    transform: scale(1.04) rotate(1deg);
+  100% {
+    background-position: 250% 0;
+  }
+}
+
+@keyframes card-hue-cycle {
+  0% {
+    filter: hue-rotate(0deg);
+  }
+  100% {
+    filter: hue-rotate(360deg);
   }
 }
 
@@ -133,16 +142,86 @@ body {
   }
 }
 
-.card-pack-idle {
-  animation: card-pack-idle-glow 1.8s ease-in-out infinite;
-}
-
-.card-pack-idle-legendary {
-  animation: card-pack-idle-glow-legendary 1.6s ease-in-out infinite;
-}
-
 .card-pack-sparkle {
   animation: card-pack-sparkle-burst 1.4s ease-in-out infinite;
+}
+
+.card-rarity-glow {
+  animation: card-glow-pulse 2s ease-in-out infinite;
+}
+
+.card-rarity-common {
+  --glow-color: rgba(148, 163, 184, 0.35);
+  --glow-spread: 16px;
+  --glow-blur: 3px;
+  --glow-scale: 1.01;
+}
+.card-rarity-uncommon {
+  --glow-color: rgba(74, 222, 128, 0.4);
+  --glow-spread: 20px;
+  --glow-blur: 4px;
+  --glow-scale: 1.015;
+}
+.card-rarity-rare {
+  --glow-color: rgba(56, 189, 248, 0.45);
+  --glow-spread: 24px;
+  --glow-blur: 5px;
+  --glow-scale: 1.02;
+  --glow-rotate: -1deg;
+}
+.card-rarity-epic {
+  --glow-color: rgba(167, 139, 250, 0.5);
+  --glow-spread: 28px;
+  --glow-blur: 6px;
+  --glow-scale: 1.025;
+  --glow-rotate: 1deg;
+}
+.card-rarity-legendary {
+  --glow-color: rgba(251, 191, 36, 0.55);
+  --glow-spread: 32px;
+  --glow-blur: 8px;
+  --glow-scale: 1.03;
+  --glow-rotate: -1deg;
+}
+.card-rarity-mythic {
+  --glow-color: rgba(244, 63, 94, 0.55);
+  --glow-spread: 36px;
+  --glow-blur: 9px;
+  --glow-scale: 1.035;
+  --glow-rotate: 1deg;
+}
+.card-rarity-ethereal {
+  --glow-color: rgba(45, 212, 191, 0.6);
+  --glow-spread: 40px;
+  --glow-blur: 10px;
+  --glow-scale: 1.04;
+  --glow-rotate: -1.5deg;
+}
+.card-rarity-divine {
+  --glow-color: rgba(236, 72, 153, 0.65);
+  --glow-spread: 46px;
+  --glow-blur: 12px;
+  --glow-scale: 1.05;
+  --glow-rotate: 1.5deg;
+  /* Only tier with an extra layered animation -- meant to read as
+     meaningfully above even mythic/ethereal. */
+  animation: card-hue-cycle 6s linear infinite, card-glow-pulse 2s ease-in-out infinite;
+}
+
+/* Holographic sheen sweep -- reserved for the top 3 tiers (mythic,
+   ethereal, divine) so they feel categorically rarer, not just recolored. */
+.card-holo {
+  position: relative;
+  overflow: hidden;
+}
+.card-holo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 40%, rgba(255, 255, 255, 0.55) 50%, transparent 60%);
+  background-size: 250% 100%;
+  animation: card-holo-sweep 2.6s ease-in-out infinite;
+  pointer-events: none;
 }
 
 /* Flip-card mechanics: perspective on the outer wrapper, both faces stacked
@@ -174,11 +253,13 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .card-pack-idle,
-  .card-pack-idle-legendary,
+  .card-rarity-glow,
+  .card-rarity-divine,
+  .card-holo::after,
   .card-pack-sparkle {
     animation: none !important;
     box-shadow: none !important;
+    filter: none !important;
   }
   .card-flip-card {
     transition: none !important;

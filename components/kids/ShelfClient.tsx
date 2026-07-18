@@ -8,22 +8,7 @@ import { searchOpenLibrary, type OpenLibraryBook } from "@/lib/open-library";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import type { BookStatus } from "@/lib/types";
-
-interface AuthorCardReveal {
-  dropped: boolean;
-  isNewAuthor: boolean;
-  boosted: boolean;
-  serialCode?: string;
-  quantity?: number;
-  card: {
-    author_name: string;
-    fun_fact: string;
-    artifact_name: string | null;
-    artifact_description: string | null;
-    icon: string;
-    rarity: "common" | "rare" | "legendary";
-  };
-}
+import type { CardRarity, CardCategory, CollectibleResult } from "@/lib/author-cards";
 
 interface ShelfBook {
   id: string;
@@ -43,6 +28,70 @@ const TABS: { key: BookStatus; label: string }[] = [
   { key: "want_to_read", label: "Want to Read" },
 ];
 
+const RARITY_PACK_GRADIENT: Record<CardRarity, string> = {
+  common: "from-slate-300 via-slate-400 to-slate-500",
+  uncommon: "from-emerald-400 via-green-500 to-emerald-600",
+  rare: "from-sky-400 via-sky-500 to-blue-600",
+  epic: "from-violet-400 via-purple-500 to-indigo-600",
+  legendary: "from-amber-400 via-amber-500 to-yellow-600",
+  mythic: "from-rose-400 via-rose-500 to-pink-600",
+  ethereal: "from-teal-300 via-cyan-400 to-teal-600",
+  divine: "from-fuchsia-400 via-pink-500 to-rose-500",
+};
+
+const RARITY_GLOW_CLASS: Record<CardRarity, string> = {
+  common: "card-rarity-common",
+  uncommon: "card-rarity-uncommon",
+  rare: "card-rarity-rare",
+  epic: "card-rarity-epic",
+  legendary: "card-rarity-legendary",
+  mythic: "card-rarity-mythic",
+  ethereal: "card-rarity-ethereal",
+  divine: "card-rarity-divine",
+};
+
+const RARITY_BADGE_CLASS: Record<CardRarity, string> = {
+  common: "bg-slate-100 text-slate-600",
+  uncommon: "bg-emerald-100 text-emerald-700",
+  rare: "bg-sky-100 text-sky-700",
+  epic: "bg-violet-100 text-violet-700",
+  legendary: "bg-amber-100 text-amber-700",
+  mythic: "bg-rose-100 text-rose-700",
+  ethereal: "bg-teal-100 text-teal-700",
+  divine: "bg-fuchsia-100 text-fuchsia-700",
+};
+
+const RARITY_RING_CLASS: Record<CardRarity, string> = {
+  common: "ring-slate-200",
+  uncommon: "ring-emerald-300",
+  rare: "ring-sky-300",
+  epic: "ring-violet-300",
+  legendary: "ring-amber-300",
+  mythic: "ring-rose-300",
+  ethereal: "ring-teal-300",
+  divine: "ring-fuchsia-300",
+};
+
+const RARITY_CONFETTI: Record<CardRarity, { particleCount: number; spread: number; colors: string[] }> = {
+  common: { particleCount: 60, spread: 55, colors: ["#94A3B8", "#CBD5E1"] },
+  uncommon: { particleCount: 80, spread: 60, colors: ["#4ADE80", "#22C55E", "#FFFFFF"] },
+  rare: { particleCount: 110, spread: 70, colors: ["#38BDF8", "#0EA5E9", "#FFFFFF"] },
+  epic: { particleCount: 140, spread: 80, colors: ["#A78BFA", "#7C3AED", "#FFFFFF"] },
+  legendary: { particleCount: 170, spread: 90, colors: ["#FBBF24", "#F59E0B", "#FFFFFF"] },
+  mythic: { particleCount: 190, spread: 100, colors: ["#FB7185", "#E11D48", "#FFFFFF"] },
+  ethereal: { particleCount: 210, spread: 110, colors: ["#2DD4BF", "#06B6D4", "#FFFFFF"] },
+  divine: { particleCount: 260, spread: 130, colors: ["#E879F9", "#EC4899", "#FBBF24", "#38BDF8", "#FFFFFF"] },
+};
+
+const HOLO_TIERS: CardRarity[] = ["mythic", "ethereal", "divine"];
+
+const CATEGORY_LABEL: Record<CardCategory, string> = { author: "Author", item: "Item", location: "Location" };
+const CATEGORY_REVEAL_TITLE: Record<CardCategory, string> = {
+  author: "New author card!",
+  item: "You found an item!",
+  location: "You discovered a place!",
+};
+
 export function ShelfClient({ userId }: { userId: string }) {
   const supabase = createClient();
   const [tab, setTab] = useState<BookStatus>("reading");
@@ -57,7 +106,7 @@ export function ShelfClient({ userId }: { userId: string }) {
   const [pages, setPages] = useState("");
   const [progress, setProgress] = useState("");
   const [markFinished, setMarkFinished] = useState(false);
-  const [cardReveal, setCardReveal] = useState<AuthorCardReveal | null>(null);
+  const [cardReveal, setCardReveal] = useState<CollectibleResult | null>(null);
   const [packOpened, setPackOpened] = useState(false);
 
   const load = useCallback(async () => {
@@ -84,7 +133,7 @@ export function ShelfClient({ userId }: { userId: string }) {
     setSearching(false);
   }
 
-async function addBook(book: OpenLibraryBook, status: BookStatus) {
+  async function addBook(book: OpenLibraryBook, status: BookStatus) {
     const res = await fetch("/api/books/shelf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -105,12 +154,14 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
   function openPack() {
     if (!cardReveal || packOpened) return;
     setPackOpened(true);
-    if (cardReveal.card.rarity === "legendary") {
-      confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ["#FBBF24", "#F59E0B", "#FFFFFF"] });
-    } else if (cardReveal.card.rarity === "rare") {
-      confetti({ particleCount: 140, spread: 85, origin: { y: 0.5 }, colors: ["#38BDF8", "#0EA5E9", "#FFFFFF"] });
-    } else {
-      confetti({ particleCount: 90, spread: 65, origin: { y: 0.5 } });
+    const burst = RARITY_CONFETTI[cardReveal.card.rarity];
+    confetti({ particleCount: burst.particleCount, spread: burst.spread, origin: { y: 0.5 }, colors: burst.colors });
+    // Mythic and above get a second, delayed burst so the top tiers read as
+    // meaningfully bigger moments, not just a recolored common drop.
+    if (HOLO_TIERS.includes(cardReveal.card.rarity)) {
+      setTimeout(() => {
+        confetti({ particleCount: Math.round(burst.particleCount * 0.6), spread: burst.spread + 20, origin: { y: 0.4 }, colors: burst.colors });
+      }, 350);
     }
   }
 
@@ -134,7 +185,7 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
     }
     if (data.authorCard?.dropped) {
       setPackOpened(false);
-      setCardReveal(data.authorCard as AuthorCardReveal);
+      setCardReveal(data.authorCard as CollectibleResult);
     }
     setLogBook(null);
     setMinutes("");
@@ -171,22 +222,14 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
       {loading ? (
         <p className="mt-8 text-slate-500">Loading…</p>
       ) : books.length === 0 ? (
-        <p className="mt-8 rounded-2xl bg-white p-8 text-center text-slate-500">
-          No books here yet. Add one!
-        </p>
+        <p className="mt-8 rounded-2xl bg-white p-8 text-center text-slate-500">No books here yet. Add one!</p>
       ) : (
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           {books.map((ub) => (
             <div key={ub.id} className="flex gap-4 rounded-2xl bg-white p-4 shadow-md">
               <div className="relative h-28 w-20 shrink-0 overflow-hidden rounded-lg bg-violet-100">
                 {ub.book.cover_url ? (
-                  <Image
-                    src={ub.book.cover_url}
-                    alt={ub.book.title}
-                    fill
-                    className="object-cover"
-                    unoptimized
-                  />
+                  <Image src={ub.book.cover_url} alt={ub.book.title} fill className="object-cover" unoptimized />
                 ) : (
                   <div className="flex h-full items-center justify-center text-3xl">📖</div>
                 )}
@@ -197,10 +240,7 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
                 {tab === "reading" && (
                   <>
                     <div className="mt-2 h-2 overflow-hidden rounded-full bg-violet-100">
-                      <div
-                        className="h-full bg-kids-teal"
-                        style={{ width: `${ub.progress_percent}%` }}
-                      />
+                      <div className="h-full bg-kids-teal" style={{ width: `${ub.progress_percent}%` }} />
                     </div>
                     <p className="mt-1 text-xs text-slate-500">{ub.progress_percent}% read</p>
                     <div className="mt-3 flex flex-wrap gap-2">
@@ -252,27 +292,16 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
             </div>
             <div className="mt-4 space-y-2">
               {searchResults.map((b, i) => (
-                <div
-                  key={`${b.title}-${i}`}
-                  className="flex items-center justify-between gap-2 rounded-xl border p-3"
-                >
+                <div key={`${b.title}-${i}`} className="flex items-center justify-between gap-2 rounded-xl border p-3">
                   <div className="min-w-0">
                     <p className="font-semibold truncate">{b.title}</p>
                     <p className="text-sm text-slate-500">{b.author}</p>
                   </div>
                   <div className="flex shrink-0 gap-1">
-                    <Button
-                      variant="kids"
-                      className="!px-2 !py-1 !text-xs"
-                      onClick={() => addBook(b, "reading")}
-                    >
+                    <Button variant="kids" className="!px-2 !py-1 !text-xs" onClick={() => addBook(b, "reading")}>
                       Reading
                     </Button>
-                    <Button
-                      variant="secondary"
-                      className="!px-2 !py-1 !text-xs"
-                      onClick={() => addBook(b, "want_to_read")}
-                    >
+                    <Button variant="secondary" className="!px-2 !py-1 !text-xs" onClick={() => addBook(b, "want_to_read")}>
                       Want
                     </Button>
                   </div>
@@ -292,28 +321,9 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
             <h2 className="text-xl font-bold">Log reading</h2>
             <p className="text-sm text-slate-600">{logBook.book.title}</p>
             <div className="mt-4 space-y-3">
-              <Input
-                label="Minutes read"
-                type="number"
-                min={0}
-                value={minutes}
-                onChange={(e) => setMinutes(e.target.value)}
-              />
-              <Input
-                label="Pages read"
-                type="number"
-                min={0}
-                value={pages}
-                onChange={(e) => setPages(e.target.value)}
-              />
-              <Input
-                label="Progress %"
-                type="number"
-                min={0}
-                max={100}
-                value={progress}
-                onChange={(e) => setProgress(e.target.value)}
-              />
+              <Input label="Minutes read" type="number" min={0} value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+              <Input label="Pages read" type="number" min={0} value={pages} onChange={(e) => setPages(e.target.value)} />
+              <Input label="Progress %" type="number" min={0} max={100} value={progress} onChange={(e) => setProgress(e.target.value)} />
               <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
                 <input
                   type="checkbox"
@@ -345,62 +355,41 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
                 type="button"
                 onClick={openPack}
                 aria-label="Open your new card"
-                className={`card-flip-face relative flex aspect-[3/4] w-full flex-col items-center justify-center gap-3 rounded-2xl p-6 text-center shadow-2xl ${
-                  cardReveal.card.rarity === "legendary"
-                    ? "card-pack-idle-legendary bg-gradient-to-br from-amber-400 via-amber-500 to-yellow-600"
-                    : cardReveal.card.rarity === "rare"
-                    ? "card-pack-idle bg-gradient-to-br from-sky-400 via-sky-500 to-blue-600"
-                    : "card-pack-idle bg-gradient-to-br from-violet-400 via-kids-purple to-indigo-600"
-                }`}
+                className={`card-flip-face card-rarity-glow relative flex aspect-[3/4] w-full flex-col items-center justify-center gap-3 rounded-2xl bg-gradient-to-br p-6 text-center shadow-2xl ${
+                  RARITY_PACK_GRADIENT[cardReveal.card.rarity]
+                } ${RARITY_GLOW_CLASS[cardReveal.card.rarity]} ${HOLO_TIERS.includes(cardReveal.card.rarity) ? "card-holo" : ""}`}
               >
                 <span className="card-pack-sparkle absolute left-6 top-8 text-2xl">✨</span>
-                <span
-                  className="card-pack-sparkle absolute right-8 top-16 text-xl"
-                  style={{ animationDelay: "0.4s" }}
-                >
+                <span className="card-pack-sparkle absolute right-8 top-16 text-xl" style={{ animationDelay: "0.4s" }}>
                   ✨
                 </span>
-                <span
-                  className="card-pack-sparkle absolute bottom-10 left-10 text-lg"
-                  style={{ animationDelay: "0.8s" }}
-                >
+                <span className="card-pack-sparkle absolute bottom-10 left-10 text-lg" style={{ animationDelay: "0.8s" }}>
                   ✨
                 </span>
                 <span className="text-6xl">🎁</span>
                 <p className="font-kids-display text-xl font-bold text-white drop-shadow">
                   {cardReveal.isNewAuthor
-                    ? "New author card!"
+                    ? CATEGORY_REVEAL_TITLE.author
                     : cardReveal.boosted
-                    ? "Event bonus card!"
-                    : "You found a card!"}
+                    ? `Event bonus ${cardReveal.category}!`
+                    : CATEGORY_REVEAL_TITLE[cardReveal.category]}
                 </p>
-                <span className="rounded-full bg-white/90 px-4 py-1.5 text-sm font-bold text-slate-800">
-                  Tap to open
-                </span>
+                <span className="rounded-full bg-white/90 px-4 py-1.5 text-sm font-bold text-slate-800">Tap to open</span>
               </button>
 
               {/* BACK FACE: revealed card -- only meaningfully visible once flipped */}
               <div
-                className={`card-flip-face card-flip-face-back flex flex-col rounded-2xl bg-white p-6 text-center shadow-2xl ring-4 ${
-                  cardReveal.card.rarity === "legendary"
-                    ? "ring-amber-300"
-                    : cardReveal.card.rarity === "rare"
-                    ? "ring-sky-300"
-                    : "ring-slate-200"
-                }`}
+                className={`card-flip-face card-flip-face-back flex flex-col rounded-2xl bg-white p-6 text-center shadow-2xl ring-4 ${RARITY_RING_CLASS[cardReveal.card.rarity]}`}
               >
-                <span className="text-6xl">{cardReveal.card.icon}</span>
-                <p className="mt-2 font-kids-display text-xl font-bold text-slate-900">
-                  {cardReveal.card.author_name}
-                </p>
                 <span
-                  className={`mt-1 inline-block w-fit self-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${
-                    cardReveal.card.rarity === "legendary"
-                      ? "bg-amber-100 text-amber-700"
-                      : cardReveal.card.rarity === "rare"
-                      ? "bg-sky-100 text-sky-700"
-                      : "bg-slate-100 text-slate-600"
-                  }`}
+                  className={`mx-auto w-fit rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${RARITY_BADGE_CLASS[cardReveal.card.rarity]}`}
+                >
+                  {CATEGORY_LABEL[cardReveal.category]}
+                </span>
+                <span className="mt-2 text-6xl">{cardReveal.card.icon}</span>
+                <p className="mt-2 font-kids-display text-xl font-bold text-slate-900">{cardReveal.card.author_name}</p>
+                <span
+                  className={`mt-1 inline-block w-fit self-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${RARITY_BADGE_CLASS[cardReveal.card.rarity]}`}
                 >
                   {cardReveal.card.rarity}
                 </span>
@@ -411,9 +400,7 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
                     {cardReveal.card.artifact_description}
                   </p>
                 )}
-                {cardReveal.serialCode && (
-                  <p className="mt-3 font-mono text-xs text-slate-400">{cardReveal.serialCode}</p>
-                )}
+                {cardReveal.serialCode && <p className="mt-3 font-mono text-xs text-slate-400">{cardReveal.serialCode}</p>}
                 {cardReveal.quantity && cardReveal.quantity > 1 && (
                   <p className="mt-1 text-xs text-slate-400">You now have {cardReveal.quantity} of this card.</p>
                 )}
