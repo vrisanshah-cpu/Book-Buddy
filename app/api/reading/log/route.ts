@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { awardXp, syncChallengeProgress } from "@/lib/challenges";
 import { XP_REWARDS } from "@/lib/xp";
 import { calculateStreak } from "@/lib/reading-stats";
+import { syncActiveEventProgress } from "@/lib/weekend-events";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -65,6 +66,10 @@ export async function POST(request: Request) {
 
   const streak = calculateStreak(sessions ?? []);
   const completedChallenges = await syncChallengeProgress(supabase, user.id);
+
+  if (finishedBook) {
+    await syncActiveEventProgress(supabase, user.id);
+  }
 
   return NextResponse.json({
     xpGained,

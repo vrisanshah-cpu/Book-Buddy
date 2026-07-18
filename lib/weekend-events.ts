@@ -224,3 +224,46 @@ export function validateGoalSpec(raw: unknown): GoalSpec | null {
     goal_config: { topic, target: Math.round(target) },
   };
 }
+
+/**
+ * Called live whenever a kid finishes a book. Re-scores that kid against
+ * every currently-active weekend event and upserts their event_entries row,
+ * so progress shows up immediately instead of only after close-weekend-event
+ * runs. Deliberately does NOT touch `rank` — ranks are only meaningful once
+ * an event closes and everyone's final numbers are in, so we leave rank null
+ * here and let close-weekend-event assign it.
+ */
+export async function syncActiveEventProgress(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<void> {
+  const { data: activeEvents } = await supabase
+    .from("weekend_events")
+    .select("id, goal_type, goal_config, starts_at, ends_at")
+    .eq("status", "active");
+
+  if (!activeEvents?.length) return;
+
+  for (const event of activeEvents) {
+    const { progress, qualifyingBookIds } = await scoreEntryForGoal(
+      supabase,
+      userId,
+      event.goal_type as GoalType,
+      event.goal_config as GoalConfig,
+      event.starts_at,
+      event.ends_at
+    );
+
+    if (progress > 0) {
+      await supabase.from("event_entries").upsert(
+        {
+          event_id: event.id,
+          user_id: userId,
+          progress,
+          qualifying_book_ids: qualifyingBookIds,
+        },
+        { onConflict: "event_id,user_id" }
+      );
+    }
+  }
+}
