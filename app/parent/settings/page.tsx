@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { getProfile, createClient } from "@/lib/supabase/server";
 import { ParentSettingsClient } from "@/components/parent/ParentSettingsClient";
-import { ParentChildProfile } from "@/components/parent/ParentChildProfile";
 
 export default async function ParentSettingsPage() {
   const { user, profile } = await getProfile();
@@ -13,27 +12,15 @@ export default async function ParentSettingsPage() {
     .select("child:users!child_id(id, display_name, username, age)")
     .eq("parent_id", user.id);
 
-    const linkedChildProfiles = (links ?? []).map((l) => {
-      const childData = Array.isArray(l.child) ? l.child[0] : l.child;
-      return childData as {
-        id: string;
-        display_name: string;
-        username: string | null;
-        age: number | null;
-      };
-    });
+  const linkedChildProfiles = (links ?? []).map((l) => {
+    const childData = Array.isArray(l.child) ? l.child[0] : l.child;
+    return childData as {
+      id: string;
+      display_name: string;
+      username: string | null;
+      age: number | null;
+    };
+  });
 
-  return (
-    <ParentSettingsClient parentId={user.id}>
-      {linkedChildProfiles.map((childProfile) => (
-        <ParentChildProfile
-          key={childProfile.id}
-          id={childProfile.id}
-          display_name={childProfile.display_name}
-          username={childProfile.username}
-          age={childProfile.age}
-        />
-      ))}
-    </ParentSettingsClient>
-  );
+  return <ParentSettingsClient parentId={user.id} initialChildren={linkedChildProfiles} />;
 }
