@@ -58,6 +58,7 @@ export function ShelfClient({ userId }: { userId: string }) {
   const [progress, setProgress] = useState("");
   const [markFinished, setMarkFinished] = useState(false);
   const [cardReveal, setCardReveal] = useState<AuthorCardReveal | null>(null);
+  const [packOpened, setPackOpened] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,6 +102,18 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
     }
   }
 
+  function openPack() {
+    if (!cardReveal || packOpened) return;
+    setPackOpened(true);
+    if (cardReveal.card.rarity === "legendary") {
+      confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ["#FBBF24", "#F59E0B", "#FFFFFF"] });
+    } else if (cardReveal.card.rarity === "rare") {
+      confetti({ particleCount: 140, spread: 85, origin: { y: 0.5 }, colors: ["#38BDF8", "#0EA5E9", "#FFFFFF"] });
+    } else {
+      confetti({ particleCount: 90, spread: 65, origin: { y: 0.5 } });
+    }
+  }
+
   async function logSession() {
     if (!logBook) return;
     const res = await fetch("/api/reading/log", {
@@ -120,9 +133,7 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
       confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
     }
     if (data.authorCard?.dropped) {
-      if (data.authorCard.card?.rarity === "legendary") {
-        confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 }, colors: ["#FBBF24", "#F59E0B", "#FFFFFF"] });
-      }
+      setPackOpened(false);
       setCardReveal(data.authorCard as AuthorCardReveal);
     }
     setLogBook(null);
@@ -327,49 +338,98 @@ async function addBook(book: OpenLibraryBook, status: BookStatus) {
 
       {cardReveal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div
-            className={`w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl ring-4 ${
-              cardReveal.card.rarity === "legendary"
-                ? "ring-amber-300"
-                : cardReveal.card.rarity === "rare"
-                ? "ring-sky-300"
-                : "ring-slate-200"
-            }`}
-          >
-            <p className="text-xs font-bold uppercase tracking-wide text-kids-purple">
-              {cardReveal.isNewAuthor ? "New author card!" : cardReveal.boosted ? "Event bonus card!" : "Card found!"}
-            </p>
-            <span className="mt-2 block text-6xl">{cardReveal.card.icon}</span>
-            <p className="mt-2 font-kids-display text-xl font-bold text-slate-900">
-              {cardReveal.card.author_name}
-            </p>
-            <span
-              className={`mt-1 inline-block rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${
-                cardReveal.card.rarity === "legendary"
-                  ? "bg-amber-100 text-amber-700"
-                  : cardReveal.card.rarity === "rare"
-                  ? "bg-sky-100 text-sky-700"
-                  : "bg-slate-100 text-slate-600"
-              }`}
-            >
-              {cardReveal.card.rarity}
-            </span>
-            <p className="mt-3 text-sm text-slate-600">{cardReveal.card.fun_fact}</p>
-            {cardReveal.card.artifact_name && (
-              <p className="mt-2 text-sm text-slate-600">
-                <span className="font-semibold text-slate-800">🏺 {cardReveal.card.artifact_name}:</span>{" "}
-                {cardReveal.card.artifact_description}
-              </p>
-            )}
-            {cardReveal.serialCode && (
-              <p className="mt-3 font-mono text-xs text-slate-400">{cardReveal.serialCode}</p>
-            )}
-            {cardReveal.quantity && cardReveal.quantity > 1 && (
-              <p className="mt-1 text-xs text-slate-400">You now have {cardReveal.quantity} of this card.</p>
-            )}
-            <Button variant="kids" fullWidth onClick={() => setCardReveal(null)} className="mt-5">
-              Add to binder
-            </Button>
+          <div className="card-flip-scene w-full max-w-sm">
+            <div className={`card-flip-card ${packOpened ? "is-flipped" : ""}`}>
+              {/* FRONT FACE: sealed pack -- tap/click to open */}
+              <button
+                type="button"
+                onClick={openPack}
+                aria-label="Open your new card"
+                className={`card-flip-face relative flex aspect-[3/4] w-full flex-col items-center justify-center gap-3 rounded-2xl p-6 text-center shadow-2xl ${
+                  cardReveal.card.rarity === "legendary"
+                    ? "card-pack-idle-legendary bg-gradient-to-br from-amber-400 via-amber-500 to-yellow-600"
+                    : cardReveal.card.rarity === "rare"
+                    ? "card-pack-idle bg-gradient-to-br from-sky-400 via-sky-500 to-blue-600"
+                    : "card-pack-idle bg-gradient-to-br from-violet-400 via-kids-purple to-indigo-600"
+                }`}
+              >
+                <span className="card-pack-sparkle absolute left-6 top-8 text-2xl">✨</span>
+                <span
+                  className="card-pack-sparkle absolute right-8 top-16 text-xl"
+                  style={{ animationDelay: "0.4s" }}
+                >
+                  ✨
+                </span>
+                <span
+                  className="card-pack-sparkle absolute bottom-10 left-10 text-lg"
+                  style={{ animationDelay: "0.8s" }}
+                >
+                  ✨
+                </span>
+                <span className="text-6xl">🎁</span>
+                <p className="font-kids-display text-xl font-bold text-white drop-shadow">
+                  {cardReveal.isNewAuthor
+                    ? "New author card!"
+                    : cardReveal.boosted
+                    ? "Event bonus card!"
+                    : "You found a card!"}
+                </p>
+                <span className="rounded-full bg-white/90 px-4 py-1.5 text-sm font-bold text-slate-800">
+                  Tap to open
+                </span>
+              </button>
+
+              {/* BACK FACE: revealed card -- only meaningfully visible once flipped */}
+              <div
+                className={`card-flip-face card-flip-face-back flex flex-col rounded-2xl bg-white p-6 text-center shadow-2xl ring-4 ${
+                  cardReveal.card.rarity === "legendary"
+                    ? "ring-amber-300"
+                    : cardReveal.card.rarity === "rare"
+                    ? "ring-sky-300"
+                    : "ring-slate-200"
+                }`}
+              >
+                <span className="text-6xl">{cardReveal.card.icon}</span>
+                <p className="mt-2 font-kids-display text-xl font-bold text-slate-900">
+                  {cardReveal.card.author_name}
+                </p>
+                <span
+                  className={`mt-1 inline-block w-fit self-center rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${
+                    cardReveal.card.rarity === "legendary"
+                      ? "bg-amber-100 text-amber-700"
+                      : cardReveal.card.rarity === "rare"
+                      ? "bg-sky-100 text-sky-700"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {cardReveal.card.rarity}
+                </span>
+                <p className="mt-3 text-sm text-slate-600">{cardReveal.card.fun_fact}</p>
+                {cardReveal.card.artifact_name && (
+                  <p className="mt-2 text-sm text-slate-600">
+                    <span className="font-semibold text-slate-800">🏺 {cardReveal.card.artifact_name}:</span>{" "}
+                    {cardReveal.card.artifact_description}
+                  </p>
+                )}
+                {cardReveal.serialCode && (
+                  <p className="mt-3 font-mono text-xs text-slate-400">{cardReveal.serialCode}</p>
+                )}
+                {cardReveal.quantity && cardReveal.quantity > 1 && (
+                  <p className="mt-1 text-xs text-slate-400">You now have {cardReveal.quantity} of this card.</p>
+                )}
+                <Button
+                  variant="kids"
+                  fullWidth
+                  onClick={() => {
+                    setCardReveal(null);
+                    setPackOpened(false);
+                  }}
+                  className="mt-5"
+                >
+                  Add to binder
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -93,3 +93,94 @@ body {
     transform: none !important;
   }
 }
+
+/* Author card binder: the "unpacking" reveal on /kids/shelf when a card drops. */
+@keyframes card-pack-idle-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(124, 58, 237, 0);
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    box-shadow: 0 0 28px 6px rgba(124, 58, 237, 0.35);
+    transform: scale(1.03) rotate(-1deg);
+  }
+}
+
+@keyframes card-pack-idle-glow-legendary {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(251, 191, 36, 0);
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    box-shadow: 0 0 36px 10px rgba(251, 191, 36, 0.55);
+    transform: scale(1.04) rotate(1deg);
+  }
+}
+
+@keyframes card-pack-sparkle-burst {
+  0% {
+    opacity: 0;
+    transform: scale(0.4) translateY(4px);
+  }
+  40% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.3) translateY(-14px);
+  }
+}
+
+.card-pack-idle {
+  animation: card-pack-idle-glow 1.8s ease-in-out infinite;
+}
+
+.card-pack-idle-legendary {
+  animation: card-pack-idle-glow-legendary 1.6s ease-in-out infinite;
+}
+
+.card-pack-sparkle {
+  animation: card-pack-sparkle-burst 1.4s ease-in-out infinite;
+}
+
+/* Flip-card mechanics: perspective on the outer wrapper, both faces stacked
+   and rotated via backface-visibility so only one shows at a time. */
+.card-flip-scene {
+  perspective: 1200px;
+}
+
+.card-flip-card {
+  position: relative;
+  width: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.card-flip-card.is-flipped {
+  transform: rotateY(180deg);
+}
+
+.card-flip-face {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.card-flip-face-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-pack-idle,
+  .card-pack-idle-legendary,
+  .card-pack-sparkle {
+    animation: none !important;
+    box-shadow: none !important;
+  }
+  .card-flip-card {
+    transition: none !important;
+  }
+}
