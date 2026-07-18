@@ -1,6 +1,85 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { XP_REWARDS } from "./xp";
 import { calculateStreak } from "./reading-stats";
+import { createAdminClient } from "./supabase/admin";
+
+/**
+ * Grants a title + badge named after a completed challenge. `titles` and
+ * `user_titles` (and `badges`/`user_badges`) only have SELECT policies for
+ * a normal user session — inserts are service-role only by design (see
+ * migration 012) — so this always goes through the admin client, never the
+ * caller's own `supabase` session.
+ */
+async function grantChallengeReward(
+  userId: string,
+  challengeId: string,
+  challengeTitle: string,
+  badgeIcon: string | null
+) {
+  const admin = createAdminClient();
+
+  const titleCode = `challenge_${challengeId}`;
+  const { data: existingTitle } = await admin
+    .from("titles")
+    .select("id")
+    .eq("code", titleCode)
+    .maybeSingle();
+
+  const titleId =
+    existingTitle?.id ??
+    (
+      await admin
+        .from("titles")
+        .insert({ code: titleCode, name: challengeTitle, rarity: "common" })
+        .select("id")
+        .single()
+    ).data?.id;
+
+  if (titleId) {
+    const { data: alreadyHasTitle } = await admin
+      .from("user_titles")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("title_id", titleId)
+      .maybeSingle();
+    if (!alreadyHasTitle) {
+      await admin.from("user_titles").insert({
+        user_id: userId,
+        title_id: titleId,
+        source_challenge_id: challengeId,
+      });
+    }
+  }
+
+  const badgeCode = `challenge_badge_${challengeId}`;
+  const { data: existingBadge } = await admin
+    .from("badges")
+    .select("id")
+    .eq("code", badgeCode)
+    .maybeSingle();
+
+  const badgeId =
+    existingBadge?.id ??
+    (
+      await admin
+        .from("badges")
+        .insert({ code: badgeCode, name: challengeTitle, icon: badgeIcon ?? "🏆", rarity: "common" })
+        .select("id")
+        .single()
+    ).data?.id;
+
+  if (badgeId) {
+    const { data: alreadyHasBadge } = await admin
+      .from("user_badges")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("badge_id", badgeId)
+      .maybeSingle();
+    if (!alreadyHasBadge) {
+      await admin.from("user_badges").insert({ user_id: userId, badge_id: badgeId });
+    }
+  }
+}
 
 export async function awardXp(
   supabase: SupabaseClient,
@@ -64,6 +143,7 @@ export async function syncChallengeProgress(
       target_value: number;
       start_date: string | null;
       end_date: string | null;
+      badge_icon: string | null;
     } | null;
     if (!ch) continue;
 
@@ -97,6 +177,7 @@ export async function syncChallengeProgress(
 
     if (done && !uc.completed) {
       await awardXp(supabase, userId, XP_REWARDS.complete_challenge);
+      await grantChallengeReward(userId, ch.id, ch.title, ch.badge_icon);
       completedTitles.push(ch.title);
     }
   }
