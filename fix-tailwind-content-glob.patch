@@ -1,0 +1,12 @@
+diff --git a/tailwind.config.ts b/tailwind.config.ts
+index 28c19c4..4a6ee4b 100644
+--- a/tailwind.config.ts
++++ b/tailwind.config.ts
+@@ -5,6 +5,7 @@ const config: Config = {
+     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
+     "./components/**/*.{js,ts,jsx,tsx,mdx}",
+     "./app/**/*.{js,ts,jsx,tsx,mdx}",
++    "./lib/**/*.{js,ts,jsx,tsx,mdx}",
+   ],
+   theme: {
+     extend: {
