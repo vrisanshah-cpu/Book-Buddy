@@ -1,0 +1,665 @@
+diff --git a/app/api/events/[id]/join/route.ts b/app/api/events/[id]/join/route.ts
+new file mode 100644
+index 0000000..bf6c6ce
+--- /dev/null
++++ b/app/api/events/[id]/join/route.ts
+@@ -0,0 +1,36 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { joinEvent } from "@/lib/weekend-events";
++
++export async function POST(request: Request, { params }: { params: { id: string } }) {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++
++  if (!user) {
++    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++  }
++
++  const { data: event } = await supabase
++    .from("weekend_events")
++    .select("id, status")
++    .eq("id", params.id)
++    .maybeSingle();
++
++  if (!event) {
++    return NextResponse.json({ error: "Event not found" }, { status: 404 });
++  }
++
++  if (event.status === "closed") {
++    return NextResponse.json({ error: "This event has already ended" }, { status: 400 });
++  }
++
++  const { error } = await joinEvent(supabase, user.id, params.id);
++
++  if (error) {
++    return NextResponse.json({ error }, { status: 500 });
++  }
++
++  return NextResponse.json({ ok: true, joined: true });
++}
+diff --git a/app/kids/events/[id]/page.tsx b/app/kids/events/[id]/page.tsx
+index ecfe36e..783e1ef 100644
+--- a/app/kids/events/[id]/page.tsx
++++ b/app/kids/events/[id]/page.tsx
+@@ -1,6 +1,6 @@
+-import Link from "next/link";
+ import { redirect, notFound } from "next/navigation";
+ import { getProfile, createClient } from "@/lib/supabase/server";
++import { EventDetailClient } from "@/components/kids/EventDetailClient";
+ 
+ export default async function EventDetailPage({ params }: { params: { id: string } }) {
+   const { user } = await getProfile();
+@@ -20,89 +20,19 @@ export default async function EventDetailPage({ params }: { params: { id: string
+     p_event_id: params.id,
+   });
+ 
+-  const rows = (leaderboard ?? []) as {
+-    student_id: string;
+-    display_name: string;
+-    avatar_url: string | null;
+-    progress: number;
+-    rank: number | null;
+-    is_me: boolean;
+-  }[];
+-
+-  const winners = rows.filter((r) => r.rank !== null && r.rank <= 3);
+-  const target = Number((event.goal_config as { target?: number })?.target ?? 1);
++  const { data: myEntry } = await supabase
++    .from("event_entries")
++    .select("id, progress, rank")
++    .eq("event_id", params.id)
++    .eq("user_id", user.id)
++    .maybeSingle();
+ 
+   return (
+-    <div>
+-      <Link href="/kids/events" className="text-sm font-semibold text-kids-purple">
+-        ← Back to events
+-      </Link>
+-
+-      <h1 className="mt-2 font-kids-display text-3xl font-bold">{event.title}</h1>
+-      <p className="mt-1 text-slate-600">{event.description}</p>
+-      <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+-        {new Date(event.starts_at).toLocaleDateString()} – {new Date(event.ends_at).toLocaleDateString()} · {event.status}
+-      </p>
+-
+-      {winners.length > 0 && (
+-        <section className="mt-6">
+-          <h2 className="font-kids-display text-xl font-bold">Winners 🎉</h2>
+-          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+-            {winners.map((w) => (
+-              <div
+-                key={w.student_id}
+-                className={`rounded-2xl bg-white p-4 text-center shadow-md ${w.is_me ? "ring-2 ring-kids-yellow" : ""}`}
+-              >
+-                <p className="text-3xl">{w.rank === 1 ? "🥇" : w.rank === 2 ? "🥈" : "🥉"}</p>
+-                <p className="mt-1 font-bold text-slate-900">{w.display_name}</p>
+-                <p className="text-xs text-slate-500">
+-                  {w.progress} / {target}
+-                </p>
+-              </div>
+-            ))}
+-          </div>
+-        </section>
+-      )}
+-
+-      <section className="mt-8">
+-        <h2 className="font-kids-display text-xl font-bold">Leaderboard</h2>
+-        <div className="mt-3 overflow-hidden rounded-2xl bg-white shadow-sm">
+-          <table className="w-full text-left text-sm">
+-            <thead className="bg-violet-50 text-slate-600">
+-              <tr>
+-                <th className="px-4 py-3">Rank</th>
+-                <th className="px-4 py-3">Reader</th>
+-                <th className="px-4 py-3">Progress</th>
+-              </tr>
+-            </thead>
+-            <tbody>
+-              {rows.length === 0 ? (
+-                <tr>
+-                  <td colSpan={3} className="px-4 py-8 text-center text-slate-500">
+-                    No entries yet.
+-                  </td>
+-                </tr>
+-              ) : (
+-                rows.map((r) => (
+-                  <tr
+-                    key={r.student_id}
+-                    className={`border-t border-violet-50 ${r.is_me ? "bg-violet-50/60 font-semibold" : ""}`}
+-                  >
+-                    <td className="px-4 py-3">{r.rank ?? "—"}</td>
+-                    <td className="px-4 py-3">
+-                      {r.display_name}
+-                      {r.is_me ? " (you)" : ""}
+-                    </td>
+-                    <td className="px-4 py-3">
+-                      {r.progress} / {target}
+-                    </td>
+-                  </tr>
+-                ))
+-              )}
+-            </tbody>
+-          </table>
+-        </div>
+-      </section>
+-    </div>
++    <EventDetailClient
++      event={event}
++      leaderboard={leaderboard ?? []}
++      hasJoined={Boolean(myEntry)}
++      myProgress={myEntry?.progress ?? 0}
++    />
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/components/kids/EventDetailClient.tsx b/components/kids/EventDetailClient.tsx
+new file mode 100644
+index 0000000..e760726
+--- /dev/null
++++ b/components/kids/EventDetailClient.tsx
+@@ -0,0 +1,250 @@
++"use client";
++
++import { useEffect, useMemo, useState } from "react";
++import Link from "next/link";
++import { getEventTheme, type GoalType, type GoalConfig } from "@/lib/weekend-events";
++
++interface WeekendEvent {
++  id: string;
++  title: string;
++  description: string;
++  goal_type: GoalType;
++  goal_config: GoalConfig;
++  starts_at: string;
++  ends_at: string;
++  status: "upcoming" | "active" | "closed";
++}
++
++interface LeaderboardRow {
++  student_id: string;
++  display_name: string;
++  avatar_url: string | null;
++  progress: number;
++  rank: number | null;
++  is_me: boolean;
++}
++
++function goalLabel(ev: WeekendEvent) {
++  const c = ev.goal_config ?? {};
++  switch (ev.goal_type) {
++    case "books_count":
++      return `Finish ${c.target ?? "?"} book${(c.target ?? 0) === 1 ? "" : "s"}`;
++    case "genre_diversity":
++      return `Finish books from ${c.target ?? "?"} different genres`;
++    case "author_prefix":
++      return `Finish books by an author starting with "${c.prefix ?? "?"}"`;
++    case "topic":
++      return `Finish ${c.target ?? "?"} book${(c.target ?? 0) === 1 ? "" : "s"} about ${c.topic ?? "a topic"}`;
++    default:
++      return "";
++  }
++}
++
++function useCountdown(targetIso: string) {
++  const [msLeft, setMsLeft] = useState(() => new Date(targetIso).getTime() - Date.now());
++
++  useEffect(() => {
++    const interval = setInterval(() => {
++      setMsLeft(new Date(targetIso).getTime() - Date.now());
++    }, 1000);
++    return () => clearInterval(interval);
++  }, [targetIso]);
++
++  const clamped = Math.max(0, msLeft);
++  const days = Math.floor(clamped / (1000 * 60 * 60 * 24));
++  const hours = Math.floor((clamped / (1000 * 60 * 60)) % 24);
++  const minutes = Math.floor((clamped / (1000 * 60)) % 60);
++  const seconds = Math.floor((clamped / 1000) % 60);
++
++  return { days, hours, minutes, seconds, isOver: msLeft <= 0 };
++}
++
++function CountdownBlock({ label, value }: { label: string; value: number }) {
++  return (
++    <div className="flex flex-col items-center rounded-2xl bg-white/15 px-3 py-2 backdrop-blur-sm min-w-[64px]">
++      <span className="font-kids-display text-2xl font-bold text-white tabular-nums">
++        {String(value).padStart(2, "0")}
++      </span>
++      <span className="text-[10px] font-semibold uppercase tracking-wide text-white/80">{label}</span>
++    </div>
++  );
++}
++
++export function EventDetailClient({
++  event,
++  leaderboard,
++  hasJoined: initialHasJoined,
++  myProgress,
++}: {
++  event: WeekendEvent;
++  leaderboard: LeaderboardRow[];
++  hasJoined: boolean;
++  myProgress: number;
++}) {
++  const [hasJoined, setHasJoined] = useState(initialHasJoined);
++  const [joining, setJoining] = useState(false);
++  const [joinError, setJoinError] = useState("");
++
++  const theme = getEventTheme(event.goal_type, event.title, event.description);
++  const target = Number(event.goal_config?.target ?? 1);
++  const pct = Math.min(100, Math.round((myProgress / target) * 100));
++
++  const countdownTarget = event.status === "upcoming" ? event.starts_at : event.ends_at;
++  const countdown = useCountdown(countdownTarget);
++
++  const countdownLabel = useMemo(() => {
++    if (event.status === "closed") return "Event ended";
++    if (countdown.isOver) return event.status === "upcoming" ? "Starting now!" : "Wrapping up…";
++    return event.status === "upcoming" ? "Starts in" : "Ends in";
++  }, [event.status, countdown.isOver]);
++
++  const winners = leaderboard.filter((r) => r.rank !== null && r.rank <= 3);
++
++  async function handleJoin() {
++    setJoining(true);
++    setJoinError("");
++    const res = await fetch(`/api/events/${event.id}/join`, { method: "POST" });
++    if (!res.ok) {
++      const data = await res.json().catch(() => ({}));
++      setJoinError(data.error ?? "Couldn't join right now — try again.");
++    } else {
++      setHasJoined(true);
++    }
++    setJoining(false);
++  }
++
++  return (
++    <div>
++      <Link href="/kids/events" className="text-sm font-semibold text-kids-purple">
++        ← Back to events
++      </Link>
++
++      <div className={`mt-3 overflow-hidden rounded-3xl bg-gradient-to-br ${theme.gradient} p-6 text-white shadow-lg sm:p-8`}>
++        <div className="flex items-start justify-between gap-4">
++          <div>
++            <span className="text-5xl">{theme.emoji}</span>
++            <h1 className="mt-3 font-kids-display text-2xl font-bold sm:text-3xl">{event.title}</h1>
++            <p className="mt-2 max-w-xl text-sm text-white/90 sm:text-base">{event.description}</p>
++            <p className="mt-3 inline-block rounded-full bg-white/20 px-3 py-1 text-xs font-bold uppercase tracking-wide">
++              {goalLabel(event)}
++            </p>
++          </div>
++          <span
++            className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${
++              event.status === "active"
++                ? "bg-emerald-400/90 text-emerald-950"
++                : event.status === "upcoming"
++                ? "bg-amber-300/90 text-amber-950"
++                : "bg-white/20 text-white"
++            }`}
++          >
++            {event.status}
++          </span>
++        </div>
++
++        {event.status !== "closed" && (
++          <div className="mt-6">
++            <p className="text-xs font-semibold uppercase tracking-wide text-white/70">{countdownLabel}</p>
++            <div className="mt-2 flex gap-2">
++              <CountdownBlock label="Days" value={countdown.days} />
++              <CountdownBlock label="Hrs" value={countdown.hours} />
++              <CountdownBlock label="Min" value={countdown.minutes} />
++              <CountdownBlock label="Sec" value={countdown.seconds} />
++            </div>
++          </div>
++        )}
++
++        <div className="mt-6">
++          {hasJoined ? (
++            <div className="rounded-2xl bg-white/15 p-4">
++              <p className="font-kids-display text-lg font-bold">🎉 You're in!</p>
++              <div className="mt-2 h-3 overflow-hidden rounded-full bg-white/25">
++                <div
++                  className="h-full rounded-full bg-white transition-all duration-500"
++                  style={{ width: `${pct}%` }}
++                />
++              </div>
++              <p className="mt-1 text-sm text-white/90">
++                {myProgress} / {target} — {pct >= 100 ? "Goal complete! 🏆" : "keep going!"}
++              </p>
++            </div>
++          ) : event.status === "closed" ? (
++            <p className="text-sm text-white/80">This event has ended.</p>
++          ) : (
++            <div>
++              <button
++                type="button"
++                onClick={handleJoin}
++                disabled={joining}
++                className="rounded-2xl bg-white px-6 py-3 font-kids-display text-base font-bold text-slate-900 shadow-md transition hover:scale-[1.02] disabled:opacity-60"
++              >
++                {joining ? "Joining…" : "🙋 Join this challenge!"}
++              </button>
++              {joinError && <p className="mt-2 text-sm text-amber-200">{joinError}</p>}
++            </div>
++          )}
++        </div>
++      </div>
++
++      {winners.length > 0 && (
++        <section className="mt-8">
++          <h2 className="font-kids-display text-xl font-bold">Winners 🎉</h2>
++          <div className="mt-3 grid gap-3 sm:grid-cols-3">
++            {winners.map((w) => (
++              <div
++                key={w.student_id}
++                className={`rounded-2xl bg-white p-4 text-center shadow-md ${w.is_me ? "ring-2 ring-kids-yellow" : ""}`}
++              >
++                <p className="text-3xl">{w.rank === 1 ? "🥇" : w.rank === 2 ? "🥈" : "🥉"}</p>
++                <p className="mt-1 font-bold text-slate-900">{w.display_name}</p>
++                <p className="text-xs text-slate-500">
++                  {w.progress} / {target}
++                </p>
++              </div>
++            ))}
++          </div>
++        </section>
++      )}
++
++      <section className="mt-8">
++        <h2 className="font-kids-display text-xl font-bold">Leaderboard</h2>
++        <div className="mt-3 overflow-hidden rounded-2xl bg-white shadow-sm">
++          <table className="w-full text-left text-sm">
++            <thead className="bg-violet-50 text-slate-600">
++              <tr>
++                <th className="px-4 py-3">Rank</th>
++                <th className="px-4 py-3">Reader</th>
++                <th className="px-4 py-3">Progress</th>
++              </tr>
++            </thead>
++            <tbody>
++              {leaderboard.length === 0 ? (
++                <tr>
++                  <td colSpan={3} className="px-4 py-8 text-center text-slate-500">
++                    {hasJoined ? "No one has made progress yet — be the first!" : "Join to be the first on the board!"}
++                  </td>
++                </tr>
++              ) : (
++                leaderboard.map((r) => (
++                  <tr
++                    key={r.student_id}
++                    className={`border-t border-violet-50 ${r.is_me ? "bg-violet-50/60 font-semibold" : ""}`}
++                  >
++                    <td className="px-4 py-3">{r.rank ?? "—"}</td>
++                    <td className="px-4 py-3">
++                      {r.display_name}
++                      {r.is_me ? " (you)" : ""}
++                    </td>
++                    <td className="px-4 py-3">
++                      {r.progress} / {target}
++                    </td>
++                  </tr>
++                ))
++              )}
++            </tbody>
++          </table>
++        </div>
++      </section>
++    </div>
++  );
++}
+diff --git a/debug-topic-scoring.patch b/debug-topic-scoring.patch
+deleted file mode 100644
+index c871396..0000000
+--- a/debug-topic-scoring.patch
++++ /dev/null
+@@ -1,145 +0,0 @@
+-diff --git a/.gitignore b/.gitignore
+-index 89496bb..b564849 100644
+---- a/.gitignore
+-+++ b/.gitignore
+-@@ -33,3 +33,4 @@ yarn-error.log*
+- # typescript
+- *.tsbuildinfo
+- next-env.d.ts
+-+live-event-progress.patch
+-diff --git a/lib/weekend-events.ts b/lib/weekend-events.ts
+-index 4a677a1..4abc4cc 100644
+---- a/lib/weekend-events.ts
+-+++ b/lib/weekend-events.ts
+-@@ -95,8 +95,12 @@ Respond with ONLY JSON in exactly this shape: {"score": integer 0-10}`,
+-     );
+-     const parsed = JSON.parse(raw);
+-     const score = Number(parsed.score);
+-+    // TEMP DEBUG — remove once topic-scoring is confirmed working
+-+    console.log("DEBUG topic score:", JSON.stringify({ title, topic, raw, score }));
+-     return Number.isFinite(score) && score >= 6;
+--  } catch {
+-+  } catch (err) {
+-+    // TEMP DEBUG — remove once topic-scoring is confirmed working
+-+    console.log("DEBUG topic scoring error:", JSON.stringify({ title, topic, err: String(err) }));
+-     // Fail closed — don't award credit for a book we couldn't verify.
+-     return false;
+-   }
+-@@ -254,6 +258,12 @@ export async function syncActiveEventProgress(
+-       event.ends_at
+-     );
+- 
+-+    // TEMP DEBUG — remove once live progress is confirmed working
+-+    console.log(
+-+      "DEBUG syncActiveEventProgress:",
+-+      JSON.stringify({ eventId: event.id, goalType: event.goal_type, progress, qualifyingBookIds })
+-+    );
+-+
+-     if (progress > 0) {
+-       await supabase.from("event_entries").upsert(
+-         {
+-diff --git a/live-event-progress.patch b/live-event-progress.patch
+-deleted file mode 100644
+-index 9334959..0000000
+---- a/live-event-progress.patch
+-+++ /dev/null
+-@@ -1,99 +0,0 @@
+--diff --git a/app/api/reading/log/route.ts b/app/api/reading/log/route.ts
+--index 49bc33f..a24ad8e 100644
+----- a/app/api/reading/log/route.ts
+--+++ b/app/api/reading/log/route.ts
+--@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
+-- import { awardXp, syncChallengeProgress } from "@/lib/challenges";
+-- import { XP_REWARDS } from "@/lib/xp";
+-- import { calculateStreak } from "@/lib/reading-stats";
+--+import { syncActiveEventProgress } from "@/lib/weekend-events";
+-- 
+-- export async function POST(request: Request) {
+--   const supabase = await createClient();
+--@@ -66,6 +67,10 @@ export async function POST(request: Request) {
+--   const streak = calculateStreak(sessions ?? []);
+--   const completedChallenges = await syncChallengeProgress(supabase, user.id);
+-- 
+--+  if (finishedBook) {
+--+    await syncActiveEventProgress(supabase, user.id);
+--+  }
+--+
+--   return NextResponse.json({
+--     xpGained,
+--     finishedBook,
+--diff --git a/lib/weekend-events.ts b/lib/weekend-events.ts
+--index e4505fd..4a677a1 100644
+----- a/lib/weekend-events.ts
+--+++ b/lib/weekend-events.ts
+--@@ -223,4 +223,47 @@ export function validateGoalSpec(raw: unknown): GoalSpec | null {
+--     goal_type,
+--     goal_config: { topic, target: Math.round(target) },
+--   };
+---}
+--\ No newline at end of file
+--+}
+--+
+--+/**
+--+ * Called live whenever a kid finishes a book. Re-scores that kid against
+--+ * every currently-active weekend event and upserts their event_entries row,
+--+ * so progress shows up immediately instead of only after close-weekend-event
+--+ * runs. Deliberately does NOT touch `rank` — ranks are only meaningful once
+--+ * an event closes and everyone's final numbers are in, so we leave rank null
+--+ * here and let close-weekend-event assign it.
+--+ */
+--+export async function syncActiveEventProgress(
+--+  supabase: SupabaseClient,
+--+  userId: string
+--+): Promise<void> {
+--+  const { data: activeEvents } = await supabase
+--+    .from("weekend_events")
+--+    .select("id, goal_type, goal_config, starts_at, ends_at")
+--+    .eq("status", "active");
+--+
+--+  if (!activeEvents?.length) return;
+--+
+--+  for (const event of activeEvents) {
+--+    const { progress, qualifyingBookIds } = await scoreEntryForGoal(
+--+      supabase,
+--+      userId,
+--+      event.goal_type as GoalType,
+--+      event.goal_config as GoalConfig,
+--+      event.starts_at,
+--+      event.ends_at
+--+    );
+--+
+--+    if (progress > 0) {
+--+      await supabase.from("event_entries").upsert(
+--+        {
+--+          event_id: event.id,
+--+          user_id: userId,
+--+          progress,
+--+          qualifying_book_ids: qualifyingBookIds,
+--+        },
+--+        { onConflict: "event_id,user_id" }
+--+      );
+--+    }
+--+  }
+--+}
+--diff --git a/supabase/migrations/013_event_entries_live_progress.sql b/supabase/migrations/013_event_entries_live_progress.sql
+--new file mode 100644
+--index 0000000..b97ce5e
+----- /dev/null
+--+++ b/supabase/migrations/013_event_entries_live_progress.sql
+--@@ -0,0 +1,16 @@
+--+-- Allows a kid to upsert their own live progress row while a weekend event
+--+-- is active, via app/api/reading/log/route.ts calling
+--+-- syncActiveEventProgress() (lib/weekend-events.ts) right when a book is
+--+-- marked finished. Previously event_entries was only ever written by
+--+-- close-weekend-event's service-role admin client (which bypasses RLS
+--+-- entirely), so this doesn't conflict with that -- rank is still only ever
+--+-- assigned there, never by the live-progress path.
+--+
+--+drop policy if exists "event_entries_upsert_own" on public.event_entries;
+--+create policy "event_entries_upsert_own" on public.event_entries for insert
+--+  with check (user_id = auth.uid());
+--+
+--+drop policy if exists "event_entries_update_own" on public.event_entries;
+--+create policy "event_entries_update_own" on public.event_entries for update
+--+  using (user_id = auth.uid())
+--+  with check (user_id = auth.uid());
+diff --git a/lib/weekend-events.ts b/lib/weekend-events.ts
+index 4abc4cc..490338a 100644
+--- a/lib/weekend-events.ts
++++ b/lib/weekend-events.ts
+@@ -265,7 +265,7 @@ export async function syncActiveEventProgress(
+     );
+ 
+     if (progress > 0) {
+-      await supabase.from("event_entries").upsert(
++      const { error } = await supabase.from("event_entries").upsert(
+         {
+           event_id: event.id,
+           user_id: userId,
+@@ -274,6 +274,86 @@ export async function syncActiveEventProgress(
+         },
+         { onConflict: "event_id,user_id" }
+       );
++      // TEMP DEBUG — remove once live progress is confirmed working. A
++      // silent RLS failure (e.g. migration 013 never actually run in
++      // Supabase) previously looked identical to "book didn't qualify".
++      if (error) {
++        console.log("DEBUG event_entries upsert error:", JSON.stringify({ eventId: event.id, error }));
++      }
+     }
+   }
+ }
++
++/**
++ * Explicit "I'm in!" registration. Inserts a zero-progress event_entries row
++ * immediately so the kid gets visible confirmation of joining, instead of
++ * only ever seeing themselves on the board once they finish a qualifying
++ * book (which, per syncActiveEventProgress above, only writes a row once
++ * progress > 0). Safe to call repeatedly — onConflict ignores an existing
++ * row rather than resetting real progress back to 0.
++ */
++export async function joinEvent(
++  supabase: SupabaseClient,
++  userId: string,
++  eventId: string
++): Promise<{ error: string | null }> {
++  const { data: existing } = await supabase
++    .from("event_entries")
++    .select("id")
++    .eq("event_id", eventId)
++    .eq("user_id", userId)
++    .maybeSingle();
++
++  if (existing) return { error: null };
++
++  const { error } = await supabase.from("event_entries").insert({
++    event_id: eventId,
++    user_id: userId,
++    progress: 0,
++    qualifying_book_ids: [],
++  });
++
++  return { error: error?.message ?? null };
++}
++
++export interface EventTheme {
++  emoji: string;
++  gradient: string; // tailwind gradient classes
++  accent: string; // tailwind text/bg color class fragment
++}
++
++/**
++ * Purely visual — picks an emoji + color theme from the goal_type and
++ * title/description keywords, so generated events (which vary every week)
++ * still feel distinct rather than uniformly purple.
++ */
++export function getEventTheme(goalType: GoalType, title: string, description: string): EventTheme {
++  const text = `${title} ${description}`.toLowerCase();
++
++  if (/space|astronaut|planet|alien|galaxy|rocket/.test(text)) {
++    return { emoji: "🚀", gradient: "from-indigo-600 via-violet-600 to-purple-700", accent: "indigo" };
++  }
++  if (/ocean|sea|underwater|pirate|island/.test(text)) {
++    return { emoji: "🌊", gradient: "from-cyan-500 via-teal-500 to-blue-600", accent: "teal" };
++  }
++  if (/dragon|magic|wizard|fairy|myth/.test(text)) {
++    return { emoji: "🐉", gradient: "from-fuchsia-600 via-pink-600 to-rose-600", accent: "pink" };
++  }
++  if (/animal|jungle|forest|wild/.test(text)) {
++    return { emoji: "🦁", gradient: "from-amber-500 via-orange-500 to-yellow-500", accent: "amber" };
++  }
++  if (/mystery|detective|spy|clue/.test(text)) {
++    return { emoji: "🕵️", gradient: "from-slate-700 via-slate-600 to-zinc-700", accent: "slate" };
++  }
++
++  switch (goalType) {
++    case "genre_diversity":
++      return { emoji: "🎨", gradient: "from-fuchsia-500 via-purple-500 to-indigo-500", accent: "purple" };
++    case "author_prefix":
++      return { emoji: "✍️", gradient: "from-emerald-500 via-teal-500 to-cyan-500", accent: "emerald" };
++    case "topic":
++      return { emoji: "🔭", gradient: "from-violet-600 via-purple-600 to-fuchsia-600", accent: "violet" };
++    default:
++      return { emoji: "📚", gradient: "from-kids-purple via-purple-600 to-indigo-600", accent: "purple" };
++  }
++}

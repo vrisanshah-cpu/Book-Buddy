@@ -265,7 +265,7 @@ export async function syncActiveEventProgress(
     );
 
     if (progress > 0) {
-      await supabase.from("event_entries").upsert(
+      const { error } = await supabase.from("event_entries").upsert(
         {
           event_id: event.id,
           user_id: userId,
@@ -274,6 +274,86 @@ export async function syncActiveEventProgress(
         },
         { onConflict: "event_id,user_id" }
       );
+      // TEMP DEBUG — remove once live progress is confirmed working. A
+      // silent RLS failure (e.g. migration 013 never actually run in
+      // Supabase) previously looked identical to "book didn't qualify".
+      if (error) {
+        console.log("DEBUG event_entries upsert error:", JSON.stringify({ eventId: event.id, error }));
+      }
     }
+  }
+}
+
+/**
+ * Explicit "I'm in!" registration. Inserts a zero-progress event_entries row
+ * immediately so the kid gets visible confirmation of joining, instead of
+ * only ever seeing themselves on the board once they finish a qualifying
+ * book (which, per syncActiveEventProgress above, only writes a row once
+ * progress > 0). Safe to call repeatedly — onConflict ignores an existing
+ * row rather than resetting real progress back to 0.
+ */
+export async function joinEvent(
+  supabase: SupabaseClient,
+  userId: string,
+  eventId: string
+): Promise<{ error: string | null }> {
+  const { data: existing } = await supabase
+    .from("event_entries")
+    .select("id")
+    .eq("event_id", eventId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (existing) return { error: null };
+
+  const { error } = await supabase.from("event_entries").insert({
+    event_id: eventId,
+    user_id: userId,
+    progress: 0,
+    qualifying_book_ids: [],
+  });
+
+  return { error: error?.message ?? null };
+}
+
+export interface EventTheme {
+  emoji: string;
+  gradient: string; // tailwind gradient classes
+  accent: string; // tailwind text/bg color class fragment
+}
+
+/**
+ * Purely visual — picks an emoji + color theme from the goal_type and
+ * title/description keywords, so generated events (which vary every week)
+ * still feel distinct rather than uniformly purple.
+ */
+export function getEventTheme(goalType: GoalType, title: string, description: string): EventTheme {
+  const text = `${title} ${description}`.toLowerCase();
+
+  if (/space|astronaut|planet|alien|galaxy|rocket/.test(text)) {
+    return { emoji: "🚀", gradient: "from-indigo-600 via-violet-600 to-purple-700", accent: "indigo" };
+  }
+  if (/ocean|sea|underwater|pirate|island/.test(text)) {
+    return { emoji: "🌊", gradient: "from-cyan-500 via-teal-500 to-blue-600", accent: "teal" };
+  }
+  if (/dragon|magic|wizard|fairy|myth/.test(text)) {
+    return { emoji: "🐉", gradient: "from-fuchsia-600 via-pink-600 to-rose-600", accent: "pink" };
+  }
+  if (/animal|jungle|forest|wild/.test(text)) {
+    return { emoji: "🦁", gradient: "from-amber-500 via-orange-500 to-yellow-500", accent: "amber" };
+  }
+  if (/mystery|detective|spy|clue/.test(text)) {
+    return { emoji: "🕵️", gradient: "from-slate-700 via-slate-600 to-zinc-700", accent: "slate" };
+  }
+
+  switch (goalType) {
+    case "genre_diversity":
+      return { emoji: "🎨", gradient: "from-fuchsia-500 via-purple-500 to-indigo-500", accent: "purple" };
+    case "author_prefix":
+      return { emoji: "✍️", gradient: "from-emerald-500 via-teal-500 to-cyan-500", accent: "emerald" };
+    case "topic":
+      return { emoji: "🔭", gradient: "from-violet-600 via-purple-600 to-fuchsia-600", accent: "violet" };
+    default:
+      return { emoji: "📚", gradient: "from-kids-purple via-purple-600 to-indigo-600", accent: "purple" };
   }
 }
