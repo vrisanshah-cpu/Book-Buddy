@@ -95,8 +95,12 @@ Respond with ONLY JSON in exactly this shape: {"score": integer 0-10}`,
     );
     const parsed = JSON.parse(raw);
     const score = Number(parsed.score);
+    // TEMP DEBUG — remove once topic-scoring is confirmed working
+    console.log("DEBUG topic score:", JSON.stringify({ title, topic, raw, score }));
     return Number.isFinite(score) && score >= 6;
-  } catch {
+  } catch (err) {
+    // TEMP DEBUG — remove once topic-scoring is confirmed working
+    console.log("DEBUG topic scoring error:", JSON.stringify({ title, topic, err: String(err) }));
     // Fail closed — don't award credit for a book we couldn't verify.
     return false;
   }
@@ -252,6 +256,12 @@ export async function syncActiveEventProgress(
       event.goal_config as GoalConfig,
       event.starts_at,
       event.ends_at
+    );
+
+    // TEMP DEBUG — remove once live progress is confirmed working
+    console.log(
+      "DEBUG syncActiveEventProgress:",
+      JSON.stringify({ eventId: event.id, goalType: event.goal_type, progress, qualifyingBookIds })
     );
 
     if (progress > 0) {
