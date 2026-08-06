@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import type { BookStatus } from "@/lib/types";
 import type { CardRarity, CardCategory, CollectibleResult } from "@/lib/author-cards";
+import { queueReadingLog, type ReadingLogPayload } from "@/lib/offline-queue";
 
 interface ShelfBook {
   id: string;
@@ -165,34 +166,60 @@ export function ShelfClient({ userId }: { userId: string }) {
     }
   }
 
-  async function logSession() {
-    if (!logBook) return;
-    const res = await fetch("/api/reading/log", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        bookId: logBook.book.id,
-        userBookId: logBook.id,
-        minutesRead: minutes,
-        pagesRead: pages,
-        progressPercent: progress || logBook.progress_percent,
-        markFinished,
-      }),
-    });
-    const data = await res.json();
-    if (markFinished || data.finishedBook) {
-      confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
-    }
-    if (data.authorCard?.dropped) {
-      setPackOpened(false);
-      setCardReveal(data.authorCard as CollectibleResult);
-    }
+  function resetLogModal() {
     setLogBook(null);
     setMinutes("");
     setPages("");
     setProgress("");
     setMarkFinished(false);
-    load();
+  }
+
+  async function logSession() {
+    if (!logBook) return;
+    const payload: ReadingLogPayload = {
+      bookId: logBook.book.id,
+      userBookId: logBook.id,
+      minutesRead: minutes,
+      pagesRead: pages,
+      progressPercent: progress || logBook.progress_percent,
+      markFinished,
+    };
+
+    // No connection at all — don't even attempt the round trip, just queue
+    // it. <OfflineBanner /> (in the kids layout) shows the kid this saved.
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      await queueReadingLog(payload);
+      resetLogModal();
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/reading/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert("Couldn't save that reading log: " + (data.error ?? res.status));
+        return;
+      }
+      const data = await res.json();
+      if (markFinished || data.finishedBook) {
+        confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
+      }
+      if (data.authorCard?.dropped) {
+        setPackOpened(false);
+        setCardReveal(data.authorCard as CollectibleResult);
+      }
+      resetLogModal();
+      load();
+    } catch {
+      // Fetch itself threw — connection dropped mid-request. Queue it
+      // rather than losing the kid's progress; it'll sync automatically.
+      await queueReadingLog(payload);
+      resetLogModal();
+    }
   }
 
   return (
