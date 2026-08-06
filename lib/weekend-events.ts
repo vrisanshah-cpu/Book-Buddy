@@ -95,12 +95,8 @@ Respond with ONLY JSON in exactly this shape: {"score": integer 0-10}`,
     );
     const parsed = JSON.parse(raw);
     const score = Number(parsed.score);
-    // TEMP DEBUG — remove once topic-scoring is confirmed working
-    console.log("DEBUG topic score:", JSON.stringify({ title, topic, raw, score }));
     return Number.isFinite(score) && score >= 6;
-  } catch (err) {
-    // TEMP DEBUG — remove once topic-scoring is confirmed working
-    console.log("DEBUG topic scoring error:", JSON.stringify({ title, topic, err: String(err) }));
+  } catch {
     // Fail closed — don't award credit for a book we couldn't verify.
     return false;
   }
@@ -258,14 +254,8 @@ export async function syncActiveEventProgress(
       event.ends_at
     );
 
-    // TEMP DEBUG — remove once live progress is confirmed working
-    console.log(
-      "DEBUG syncActiveEventProgress:",
-      JSON.stringify({ eventId: event.id, goalType: event.goal_type, progress, qualifyingBookIds })
-    );
-
     if (progress > 0) {
-      const { error } = await supabase.from("event_entries").upsert(
+      await supabase.from("event_entries").upsert(
         {
           event_id: event.id,
           user_id: userId,
@@ -274,12 +264,6 @@ export async function syncActiveEventProgress(
         },
         { onConflict: "event_id,user_id" }
       );
-      // TEMP DEBUG — remove once live progress is confirmed working. A
-      // silent RLS failure (e.g. migration 013 never actually run in
-      // Supabase) previously looked identical to "book didn't qualify".
-      if (error) {
-        console.log("DEBUG event_entries upsert error:", JSON.stringify({ eventId: event.id, error }));
-      }
     }
   }
 }

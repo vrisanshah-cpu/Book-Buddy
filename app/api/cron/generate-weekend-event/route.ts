@@ -7,9 +7,6 @@ import { validateGoalSpec, getUpcomingWeekendWindow } from "@/lib/weekend-events
 // Vercel Cron hits this on GET. Don't let Next.js cache this route.
 export const dynamic = "force-dynamic";
 
-// TEMP TEST — set to false (or remove this + the check below) once confirmed working
-const FORCE_GENERATION_DAY = false;
-
 const HOUSTON_TZ = "America/Chicago"; // Houston observes Central Time (handles CDT/CST automatically)
 
 // Returns the current day-of-week (0=Sun ... 6=Sat) in a given IANA timezone
@@ -27,20 +24,30 @@ function getDayOfWeekInTimezone(date: Date, timeZone: string): number {
 
 function isAuthorized(request: Request) {
   const secret = process.env.CRON_SECRET;
-  const received = request.headers.get("authorization");
-
-  // TEMP DEBUG — remove after diagnosing the 401 issue
-  console.log("DEBUG expected secret length:", secret?.length);
-  console.log("DEBUG expected secret (raw):", JSON.stringify(secret));
-  console.log("DEBUG received header (raw):", JSON.stringify(received));
-  // END TEMP DEBUG
-
   if (!secret) return false;
-  return received === `Bearer ${secret}`;
+  return request.headers.get("authorization") === `Bearer ${secret}`;
 }
 
-const PROMPT = `Design ONE fun weekend reading contest for kids aged 5-12 using a reading app.
-Make it playful and different from a typical past contest. Choose exactly one goal_type:
+// The bug: this used to be a single static prompt string, sent to Gemini
+// completely unchanged every week. With no exclusion list and no
+// randomness, an LLM given the exact same input tends to converge on
+// whichever completion is statistically most "obvious" for the prompt —
+// in practice, that meant a near-identical "blast off into outer space"
+// idea nearly every time. The fix: tell it what's already been done
+// (recentTitles/recentGoalTypes, last 10 events) and inject real entropy
+// (timestamp + random seed) so repeated calls can't converge the same way.
+function buildPrompt(recentTitles: string[], recentGoalTypes: string[], seed: string): string {
+  const exclusionLine =
+    recentTitles.length > 0
+      ? `\nDO NOT reuse these recent contest themes or anything close to them: ${recentTitles.join(", ")}. Pick something genuinely different — e.g. if those were space-themed, go somewhere else entirely (deep sea, mythical creatures, time travel, mystery, sports, cooking, robots, ancient history...).`
+      : "";
+  const goalTypeLine =
+    recentGoalTypes.length > 0
+      ? `\nAlso vary the goal_type and its target/prefix/topic from recent contests — recent goal_types used were: ${recentGoalTypes.join(", ")}. Prefer a different goal_type than the most recent one if it still fits a fun theme.`
+      : "";
+
+  return `Design ONE fun weekend reading contest for kids aged 5-12 using a reading app.
+Make it playful and genuinely different from past contests. Choose exactly one goal_type:
 - "books_count": finish N books
 - "genre_diversity": finish books from N different genres
 - "author_prefix": finish N books by an author whose last name starts with a given letter
@@ -55,7 +62,10 @@ Respond with ONLY JSON, no other text, in exactly this shape:
                  { "prefix": "S" } (single letter) for author_prefix,
                  or { "topic": "short phrase", "target": integer } for topic
 }
-Keep targets achievable inside a single weekend (1-3 books).`;
+Keep targets achievable inside a single weekend (1-3 books).
+${exclusionLine}${goalTypeLine}
+Randomness seed (use this to steer toward a fresh, unexpected theme — do not mention it in your output): ${seed}`;
+}
 
 export async function GET(request: Request) {
   if (!isAuthorized(request)) {
@@ -77,7 +87,7 @@ export async function GET(request: Request) {
   // this day-of-week check is what actually enforces "once a week" rather
   // than the cron schedule itself. Only generate on Fridays in Houston time,
   // for the upcoming Sat–Sun.
-  if (!FORCE_GENERATION_DAY && getDayOfWeekInTimezone(now, HOUSTON_TZ) !== 5) {
+  if (getDayOfWeekInTimezone(now, HOUSTON_TZ) !== 5) {
     return NextResponse.json({ ok: true, skipped: "not-generation-day" });
   }
 
@@ -97,17 +107,25 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true, skipped: "no-ai-key" });
   }
 
+  const { data: recentEvents } = await admin
+    .from("weekend_events")
+    .select("title, goal_type")
+    .order("starts_at", { ascending: false })
+    .limit(10);
+
+  const recentTitles = (recentEvents ?? []).map((e) => e.title).filter(Boolean);
+  const recentGoalTypes = (recentEvents ?? []).map((e) => e.goal_type).filter(Boolean);
+  const seed = `${now.toISOString()}-${Math.floor(Math.random() * 1_000_000)}`;
+
   let parsed;
   try {
     const raw = await callGemini(
       "You design short, fun weekend reading contests for kids aged 5-12. Always respond with strict JSON only.",
-      [{ role: "user", text: PROMPT }],
+      [{ role: "user", text: buildPrompt(recentTitles, recentGoalTypes, seed) }],
       { jsonMode: true }
     );
     parsed = validateGoalSpec(JSON.parse(raw));
-  } catch (err) {
-    // TEMP DEBUG — surface why validation/parsing failed
-    console.log("DEBUG gemini/validation error:", err);
+  } catch {
     parsed = null;
   }
 
@@ -118,6 +136,7 @@ export async function GET(request: Request) {
   if (containsProfanity(parsed.title) || containsProfanity(parsed.description)) {
     return NextResponse.json({ ok: true, skipped: "profanity-filtered" });
   }
+
 
   const { error } = await admin.from("weekend_events").insert({
     title: parsed.title,
