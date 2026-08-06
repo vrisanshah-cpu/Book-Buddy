@@ -14,12 +14,13 @@ export async function purchaseShopItem(
   userId: string,
   itemCode: string
 ): Promise<PurchaseResult> {
-  const { data: item } = await supabase.from("shop_items").select("id, xp_cost").eq("code", itemCode).maybeSingle();
+  const { data: item } = await supabase.from("shop_items").select("id, name, xp_cost").eq("code", itemCode).maybeSingle();
   if (!item) return { ok: false, error: "That item doesn't exist" };
 
   const { data: spent, error: spendError } = await supabase.rpc("spend_xp", {
     p_user_id: userId,
     p_amount: item.xp_cost,
+    p_reason: item.name,
   });
   if (spendError) return { ok: false, error: spendError.message };
   if (!spent) return { ok: false, error: "Not enough XP for that" };

@@ -88,10 +88,16 @@ export async function awardXp(
 ): Promise<number> {
   const { data } = await supabase
     .from("users")
-    .select("xp")
+    .select("xp, active_xp_booster_until")
     .eq("id", userId)
     .single();
-  const newXp = (data?.xp ?? 0) + amount;
+
+  const boosterActive = Boolean(
+    data?.active_xp_booster_until && data.active_xp_booster_until > new Date().toISOString()
+  );
+  const grantedAmount = boosterActive ? amount * 2 : amount;
+
+  const newXp = (data?.xp ?? 0) + grantedAmount;
   await supabase.from("users").update({ xp: newXp }).eq("id", userId);
   return newXp;
 }
@@ -259,7 +265,7 @@ export async function syncBuddyProgressForKid(kidId: string): Promise<void> {
   const { data: pairs } = await admin
     .from("buddy_pairs")
     .select(
-      "id, challenge_id, kid_a_id, kid_b_id, completed_at, challenge:buddy_challenges(id, goal_type, target, status, starts_at, ends_at)"
+      "id, challenge_id, kid_a_id, kid_b_id, completed_at, challenge:buddy_challenges(id, title, goal_type, target, status, starts_at, ends_at)"
     )
     .or(`kid_a_id.eq.${kidId},kid_b_id.eq.${kidId}`);
 
@@ -288,6 +294,10 @@ export async function syncBuddyProgressForKid(kidId: string): Promise<void> {
       await admin.from("buddy_challenges").update({ status: "completed" }).eq("id", challenge.id);
       await awardXp(admin, pair.kid_a_id, XP_REWARDS.buddy_challenge_complete);
       await awardXp(admin, pair.kid_b_id, XP_REWARDS.buddy_challenge_complete);
+      await admin.from("xp_transactions").insert([
+        { user_id: pair.kid_a_id, amount: XP_REWARDS.buddy_challenge_complete, reason: `Buddy challenge: ${challenge.title}` },
+        { user_id: pair.kid_b_id, amount: XP_REWARDS.buddy_challenge_complete, reason: `Buddy challenge: ${challenge.title}` },
+      ]);
     }
   }
 }
