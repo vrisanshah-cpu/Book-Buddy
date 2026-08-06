@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { createClient } from "@/lib/supabase/client";
-import { searchByAuthor } from "@/lib/open-library";
 import { getEffectiveBlocksForKid, filterBlockedBooks, type EffectiveBlocks } from "@/lib/content-blocks";
 
 interface Rec {
@@ -21,10 +20,17 @@ interface FeaturedBook {
   description: string | null;
 }
 
+interface InstitutionAvailability {
+  institutionName: string;
+  institutionType: "school" | "company";
+  availableCopies: number;
+}
+
 interface AuthorBook {
   title: string;
   author: string;
   cover_url: string | null;
+  institutionAvailability?: InstitutionAvailability | null;
 }
 
 function WhereToFind({ title, author }: { title: string; author: string }) {
@@ -46,7 +52,7 @@ function BookCard({
   added,
   onAdd,
 }: {
-  book: { title: string; author: string; description?: string | null };
+  book: { title: string; author: string; description?: string | null; institutionAvailability?: InstitutionAvailability | null };
   added: boolean;
   onAdd: () => void;
 }) {
@@ -55,6 +61,12 @@ function BookCard({
       <p className="font-bold">{book.title}</p>
       <p className="text-sm text-slate-500">{book.author}</p>
       {book.description && <p className="mt-2 text-sm text-slate-600 line-clamp-2">{book.description}</p>}
+      {book.institutionAvailability && (
+        <p className="mt-2 text-xs font-semibold text-emerald-700">
+          {book.institutionAvailability.institutionType === "school" ? "🏫" : "🏢"} Available in{" "}
+          {book.institutionAvailability.institutionName}
+        </p>
+      )}
       <WhereToFind title={book.title} author={book.author} />
       <Button variant="secondary" className="mt-3 !text-xs" onClick={onAdd} disabled={added}>
         {added ? "Added ✓" : "+ Want to read"}
@@ -175,7 +187,9 @@ export function DiscoverClient() {
       return;
     }
     setSearchingAuthor(true);
-    const results = await searchByAuthor(authorQuery.trim());
+    const res = await fetch(`/api/books/search?type=author&q=${encodeURIComponent(authorQuery.trim())}`);
+    const data = await res.json().catch(() => ({}));
+    const results = res.ok ? data.results ?? [] : [];
     setAuthorResults(filterBlockedBooks(blocks, results));
     setSearchingAuthor(false);
   }
