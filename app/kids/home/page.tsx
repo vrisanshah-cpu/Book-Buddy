@@ -91,7 +91,14 @@ export default async function KidsHomePage() {
             <p className="text-xl font-bold">🔥 {streak} days</p>
           </div>
         </div>
-        <div className="mt-4 h-3 overflow-hidden rounded-full bg-white/30">
+        <div
+          className="mt-4 h-3 overflow-hidden rounded-full bg-white/30"
+          role="progressbar"
+          aria-label={`Level ${level} progress`}
+          aria-valuenow={progress}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
           <div
             className="h-full rounded-full bg-kids-yellow transition-all"
             style={{ width: `${progress}%` }}
@@ -116,7 +123,14 @@ export default async function KidsHomePage() {
             <div className="flex-1">
               <p className="font-bold text-slate-900">{book.title}</p>
               <p className="text-sm text-slate-500">{book.author}</p>
-              <div className="mt-2 h-2 overflow-hidden rounded-full bg-violet-100">
+              <div
+                className="mt-2 h-2 overflow-hidden rounded-full bg-violet-100"
+                role="progressbar"
+                aria-label={`Reading progress for ${book.title}`}
+                aria-valuenow={currentBook?.progress_percent ?? 0}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
                 <div
                   className="h-full bg-kids-teal"
                   style={{ width: `${currentBook?.progress_percent ?? 0}%` }}
@@ -159,7 +173,14 @@ export default async function KidsHomePage() {
                     <span>{ch.badge_icon ?? "🏆"}</span>
                     <span className="font-semibold">{ch.title}</span>
                   </div>
-                  <div className="mt-2 h-2 rounded-full bg-violet-100">
+                  <div
+                    className="mt-2 h-2 rounded-full bg-violet-100"
+                    role="progressbar"
+                    aria-label={`${ch.title} progress`}
+                    aria-valuenow={pct}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  >
                     <div className="h-full rounded-full bg-kids-purple" style={{ width: `${pct}%` }} />
                   </div>
                 </Link>

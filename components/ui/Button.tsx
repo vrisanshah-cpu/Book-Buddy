@@ -13,7 +13,7 @@ const variants: Record<Variant, string> = {
   secondary:
     "bg-slate-100 text-slate-900 hover:bg-slate-200 disabled:opacity-50",
   ghost: "bg-transparent text-slate-700 hover:bg-slate-100",
-  kids: "bg-kids-purple text-white hover:bg-violet-700 shadow-lg disabled:opacity-50",
+  kids: "bg-kids-purple text-white hover:bg-violet-700 shadow-lg disabled:opacity-50 min-h-[44px]",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(

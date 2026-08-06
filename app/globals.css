@@ -5,11 +5,38 @@
 :root {
   --foreground: #171717;
   --background: #ffffff;
+  --bb-text-scale: 1;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
+}
+
+/* Accessibility (Phase B) — toggled by AccessibilityProvider on <html>
+   while inside /kids. Both are removed on unmount, so they never leak
+   into parent/teacher/admin/marketing pages. */
+html {
+  font-size: calc(16px * var(--bb-text-scale, 1));
+}
+
+html.dyslexia-font {
+  /* Alias the kid fonts to Lexend (loaded in app/layout.tsx) rather than
+     redefining font-kids/font-kids-display in Tailwind, so every existing
+     font-kids / font-kids-display usage picks it up automatically. */
+  --font-nunito: var(--font-lexend);
+  --font-fredoka: var(--font-lexend);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @layer utilities {

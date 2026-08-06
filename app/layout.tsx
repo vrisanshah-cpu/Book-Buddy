@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Nunito, Fredoka, Plus_Jakarta_Sans, DM_Sans } from "next/font/google";
+import { Nunito, Fredoka, Plus_Jakarta_Sans, DM_Sans, Lexend } from "next/font/google";
 import { GoogleAnalytics } from "@/components/analytics/GoogleAnalytics";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
 import "./globals.css";
@@ -22,6 +22,14 @@ const jakarta = Plus_Jakarta_Sans({
 const dmSans = DM_Sans({
   subsets: ["latin"],
   variable: "--font-dm-sans",
+});
+
+// Dyslexia-friendly option for the accessibility toggle in kid Settings —
+// see html.dyslexia-font in globals.css, which aliases --font-nunito /
+// --font-fredoka to this while the toggle is on.
+const lexend = Lexend({
+  subsets: ["latin"],
+  variable: "--font-lexend",
 });
 
 export const metadata: Metadata = {
@@ -54,7 +62,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${nunito.variable} ${fredoka.variable} ${jakarta.variable} ${dmSans.variable}`}
+      className={`${nunito.variable} ${fredoka.variable} ${jakarta.variable} ${dmSans.variable} ${lexend.variable}`}
     >
       <body className="font-sans antialiased">
         <GoogleAnalytics />

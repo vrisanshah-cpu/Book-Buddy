@@ -21,6 +21,7 @@ const moreLinks = [
   { href: "/kids/booktok", label: "BookTok", emoji: "🎬" },
   { href: "/kids/book-club", label: "Clubs", emoji: "👥" },
   { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
+  { href: "/kids/settings", label: "Settings", emoji: "⚙️" },
 ];
 
 const allLinks = [...primaryLinks, ...moreLinks];
@@ -54,7 +55,7 @@ export function KidsNav() {
   }
 
   return (
-    <nav className="sticky top-0 z-20 border-b border-violet-100 bg-white/90 backdrop-blur">
+    <nav aria-label="Kid navigation" className="sticky top-0 z-20 border-b border-violet-100 bg-white/90 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
         <Link href="/kids/home" className="shrink-0 font-kids-display text-xl font-bold text-kids-purple">
           📚 Book Buddy
@@ -64,7 +65,8 @@ export function KidsNav() {
             <Link
               key={l.href}
               href={l.href}
-              className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
+              aria-current={pathname === l.href ? "page" : undefined}
+              className={`flex min-h-[44px] items-center rounded-xl px-3 py-2 text-sm font-semibold transition ${
                 pathname === l.href ? "bg-kids-purple text-white" : "text-slate-600 hover:bg-violet-50"
               }`}
             >
@@ -75,19 +77,28 @@ export function KidsNav() {
             <button
               type="button"
               onClick={() => setMoreOpen((v) => !v)}
-              className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
+              aria-haspopup="true"
+              aria-expanded={moreOpen}
+              aria-controls="kids-more-menu"
+              className={`flex min-h-[44px] items-center rounded-xl px-3 py-2 text-sm font-semibold transition ${
                 isInMore ? "bg-kids-purple text-white" : "text-slate-600 hover:bg-violet-50"
               }`}
             >
               ⋯ More
             </button>
             {moreOpen && (
-              <div className="absolute right-0 top-full mt-2 w-44 rounded-xl bg-white p-2 shadow-lg ring-1 ring-violet-100">
+              <div
+                id="kids-more-menu"
+                role="menu"
+                className="absolute right-0 top-full mt-2 w-44 rounded-xl bg-white p-2 shadow-lg ring-1 ring-violet-100"
+              >
                 {moreLinks.map((l) => (
                   <Link
                     key={l.href}
                     href={l.href}
-                    className={`block rounded-lg px-3 py-2 text-sm font-semibold ${
+                    role="menuitem"
+                    aria-current={pathname === l.href ? "page" : undefined}
+                    className={`flex min-h-[44px] items-center rounded-lg px-3 py-2 text-sm font-semibold ${
                       pathname === l.href ? "bg-kids-purple text-white" : "text-slate-600 hover:bg-violet-50"
                     }`}
                   >
@@ -102,7 +113,11 @@ export function KidsNav() {
           <div className="hidden md:block">
             <FeedbackSurveyLauncher variant="kids" label="Feedback" />
           </div>
-          <button type="button" onClick={signOut} className="text-sm text-slate-500 hover:text-slate-800">
+          <button
+            type="button"
+            onClick={signOut}
+            className="flex min-h-[44px] items-center text-sm text-slate-500 hover:text-slate-800"
+          >
             Sign out
           </button>
         </div>
@@ -112,7 +127,8 @@ export function KidsNav() {
           <Link
             key={l.href}
             href={l.href}
-            className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-semibold ${
+            aria-current={pathname === l.href ? "page" : undefined}
+            className={`flex min-h-[44px] shrink-0 items-center rounded-xl px-3 py-1.5 text-xs font-semibold ${
               pathname === l.href ? "bg-kids-purple text-white" : "bg-violet-50 text-slate-600"
             }`}
           >
