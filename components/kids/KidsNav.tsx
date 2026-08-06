@@ -22,6 +22,8 @@ const moreLinks = [
   { href: "/kids/booktok", label: "BookTok", emoji: "🎬" },
   { href: "/kids/book-club", label: "Clubs", emoji: "👥" },
   { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
+  { href: "/kids/shop", label: "Shop", emoji: "🛍️" },
+  { href: "/kids/trades", label: "Trades", emoji: "🔄" },
   { href: "/kids/messages", label: "Messages", emoji: "💬" },
   { href: "/kids/settings", label: "Settings", emoji: "⚙️" },
 ];
