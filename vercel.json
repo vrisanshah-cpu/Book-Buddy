@@ -1,6 +1,7 @@
 {
     "crons": [
       { "path": "/api/cron/generate-weekend-event", "schedule": "0 12 * * *" },
-      { "path": "/api/cron/close-weekend-event", "schedule": "0 13 * * *" }
+      { "path": "/api/cron/close-weekend-event", "schedule": "0 13 * * *" },
+      { "path": "/api/cron/send-nudges", "schedule": "0 * * * *" }
     ]
   }
