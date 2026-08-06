@@ -191,6 +191,71 @@ export async function syncChallengeProgress(
   return completedTitles;
 }
 
+/**
+ * Same admin-client badge/title pattern as grantChallengeReward above,
+ * generalized for one-off custom prizes (currently: writing competition
+ * winners — see app/api/competitions/[id]/judge) instead of always being
+ * named after a challenge.
+ */
+export async function grantCustomReward(
+  userId: string,
+  sourceCode: string,
+  prize: { xp?: number; badgeName?: string; badgeIcon?: string; titleName?: string }
+): Promise<void> {
+  const admin = createAdminClient();
+
+  if (prize.xp) {
+    await awardXp(admin, userId, prize.xp);
+  }
+
+  if (prize.titleName) {
+    const titleCode = `${sourceCode}_title`;
+    const { data: existingTitle } = await admin.from("titles").select("id").eq("code", titleCode).maybeSingle();
+    const titleId =
+      existingTitle?.id ??
+      (await admin.from("titles").insert({ code: titleCode, name: prize.titleName, rarity: "epic" }).select("id").single())
+        .data?.id;
+
+    if (titleId) {
+      const { data: already } = await admin
+        .from("user_titles")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("title_id", titleId)
+        .maybeSingle();
+      if (!already) {
+        await admin.from("user_titles").insert({ user_id: userId, title_id: titleId });
+      }
+    }
+  }
+
+  if (prize.badgeName) {
+    const badgeCode = `${sourceCode}_badge`;
+    const { data: existingBadge } = await admin.from("badges").select("id").eq("code", badgeCode).maybeSingle();
+    const badgeId =
+      existingBadge?.id ??
+      (
+        await admin
+          .from("badges")
+          .insert({ code: badgeCode, name: prize.badgeName, icon: prize.badgeIcon ?? "🏆", rarity: "epic" })
+          .select("id")
+          .single()
+      ).data?.id;
+
+    if (badgeId) {
+      const { data: already } = await admin
+        .from("user_badges")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("badge_id", badgeId)
+        .maybeSingle();
+      if (!already) {
+        await admin.from("user_badges").insert({ user_id: userId, badge_id: badgeId });
+      }
+    }
+  }
+}
+
 export async function enrollInAvailableChallenges(
   supabase: SupabaseClient,
   userId: string

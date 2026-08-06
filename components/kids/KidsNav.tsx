@@ -25,6 +25,7 @@ const moreLinks = [
   { href: "/kids/shop", label: "Shop", emoji: "🛍️" },
   { href: "/kids/trades", label: "Trades", emoji: "🔄" },
   { href: "/kids/buddy", label: "Buddy Reading", emoji: "🤝" },
+  { href: "/kids/competitions", label: "Writing", emoji: "✍️" },
   { href: "/kids/messages", label: "Messages", emoji: "💬" },
   { href: "/kids/profile", label: "Profile", emoji: "🧑" },
   { href: "/kids/settings", label: "Settings", emoji: "⚙️" },

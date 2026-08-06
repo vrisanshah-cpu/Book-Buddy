@@ -8,6 +8,7 @@ const links = [
   { href: "/admin", label: "Dashboard" },
   { href: "/admin/featured-books", label: "Featured Books" },
   { href: "/admin/posts", label: "Posts" },
+  { href: "/admin/competitions", label: "Competitions" },
 ];
 
 export function AdminNav() {
