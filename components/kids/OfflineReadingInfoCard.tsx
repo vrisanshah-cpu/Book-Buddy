@@ -63,7 +63,7 @@ export function OfflineReadingInfoCard() {
       </div>
       <p className="mt-2 text-sm text-slate-500">
         No internet? No problem. Book Buddy saves your reading log on your
-        device and syncs it automatically the next time you're online — you
+        device and syncs it automatically the next time you&apos;re online — you
         never lose progress. You&apos;re currently{" "}
         <strong>{isOnline ? "online" : "offline (saving locally)"}</strong>.
       </p>
