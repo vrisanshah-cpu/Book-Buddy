@@ -17,6 +17,8 @@ interface WeekendEvent {
   status: EventStatus;
 }
 
+type UnifiedEvent = WeekendEvent & { source: "weekend" | "classroom" };
+
 interface MyEntry {
   event_id: string;
   progress: number;
@@ -58,6 +60,8 @@ export function EventsClient({ userId }: { userId: string }) {
   const [loading, setLoading] = useState(true);
   const [events, setEvents] = useState<WeekendEvent[]>([]);
   const [myEntries, setMyEntries] = useState<Record<string, MyEntry>>({});
+  const [classroomEvents, setClassroomEvents] = useState<WeekendEvent[]>([]);
+  const [myClassroomEntries, setMyClassroomEntries] = useState<Record<string, MyEntry>>({});
   const [badges, setBadges] = useState<MyBadge[]>([]);
   const [titles, setTitles] = useState<MyTitle[]>([]);
   const [equippedTitleId, setEquippedTitleId] = useState<string | null>(null);
@@ -67,22 +71,38 @@ export function EventsClient({ userId }: { userId: string }) {
   const load = useCallback(async () => {
     setLoading(true);
 
-    const [{ data: eventRows }, { data: entryRows }, { data: badgeRows }, { data: titleRows }, { data: profileRow }] =
-      await Promise.all([
-        supabase.from("weekend_events").select("*").order("starts_at", { ascending: false }),
-        supabase.from("event_entries").select("event_id, progress, rank").eq("user_id", userId),
-        supabase
-          .from("user_badges")
-          .select("earned_at, badge:badges(code, name, description, icon, rarity)")
-          .eq("user_id", userId),
-        supabase
-          .from("user_titles")
-          .select("title_id, earned_at, title:titles(id, code, name, rarity)")
-          .eq("user_id", userId),
-        supabase.from("users").select("equipped_title_id").eq("id", userId).single(),
-      ]);
+    const [
+      { data: eventRows },
+      { data: entryRows },
+      { data: badgeRows },
+      { data: titleRows },
+      { data: profileRow },
+      classroomEventsRes,
+      { data: classroomEntryRows },
+    ] = await Promise.all([
+      supabase.from("weekend_events").select("*").order("starts_at", { ascending: false }),
+      supabase.from("event_entries").select("event_id, progress, rank").eq("user_id", userId),
+      supabase
+        .from("user_badges")
+        .select("earned_at, badge:badges(code, name, description, icon, rarity)")
+        .eq("user_id", userId),
+      supabase
+        .from("user_titles")
+        .select("title_id, earned_at, title:titles(id, code, name, rarity)")
+        .eq("user_id", userId),
+      supabase.from("users").select("equipped_title_id").eq("id", userId).single(),
+      fetch("/api/classroom-events").then((r) => r.json().catch(() => ({ events: [] }))),
+      supabase.from("classroom_event_entries").select("event_id, progress, rank").eq("user_id", userId),
+    ]);
 
     setEvents((eventRows as WeekendEvent[]) ?? []);
+    setClassroomEvents((classroomEventsRes?.events as WeekendEvent[]) ?? []);
+
+    const classroomEntryMap: Record<string, MyEntry> = {};
+    (classroomEntryRows ?? []).forEach((e) => {
+      classroomEntryMap[e.event_id as string] = e as unknown as MyEntry;
+    });
+    setMyClassroomEntries(classroomEntryMap);
 
     const entryMap: Record<string, MyEntry> = {};
     (entryRows ?? []).forEach((e) => {
@@ -128,8 +148,12 @@ export function EventsClient({ userId }: { userId: string }) {
     setEquipping(false);
   }
 
-  const current = events.filter((e) => e.status !== "closed");
-  const past = events.filter((e) => e.status === "closed");
+  const unifiedEvents: UnifiedEvent[] = [
+    ...events.map((e) => ({ ...e, source: "weekend" as const })),
+    ...classroomEvents.map((e) => ({ ...e, source: "classroom" as const })),
+  ];
+  const current = unifiedEvents.filter((e) => e.status !== "closed");
+  const past = unifiedEvents.filter((e) => e.status === "closed");
 
   return (
     <div>
@@ -207,27 +231,34 @@ export function EventsClient({ userId }: { userId: string }) {
       ) : (
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           {(tab === "current" ? current : past).map((ev) => {
-            const mine = myEntries[ev.id];
+            const mine = ev.source === "weekend" ? myEntries[ev.id] : myClassroomEntries[ev.id];
             const target = Number(ev.goal_config?.target ?? 1);
             const pct = mine ? Math.min(100, Math.round((mine.progress / target) * 100)) : 0;
             return (
               <Link
-                key={ev.id}
-                href={`/kids/events/${ev.id}`}
+                key={`${ev.source}-${ev.id}`}
+                href={ev.source === "weekend" ? `/kids/events/${ev.id}` : `/kids/events/classroom/${ev.id}`}
                 className="block rounded-2xl bg-white p-5 shadow-md transition hover:shadow-lg"
               >
-                <div className="flex items-center justify-between">
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                      ev.status === "active"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : ev.status === "upcoming"
-                        ? "bg-amber-100 text-amber-700"
-                        : "bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    {ev.status}
-                  </span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        ev.status === "active"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : ev.status === "upcoming"
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {ev.status}
+                    </span>
+                    {ev.source === "classroom" && (
+                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                        🏫 Classroom
+                      </span>
+                    )}
+                  </div>
                   {mine?.rank && <span className="text-xs font-semibold text-kids-purple">Rank #{mine.rank}</span>}
                 </div>
                 <h3 className="mt-2 font-bold text-slate-900">{ev.title}</h3>
@@ -248,7 +279,7 @@ export function EventsClient({ userId }: { userId: string }) {
           })}
           {(tab === "current" ? current : past).length === 0 && (
             <p className="col-span-2 text-center text-slate-500">
-              {tab === "current" ? "No weekend event right now — check back Friday!" : "No past events yet."}
+              {tab === "current" ? "No events right now — check back Friday, or ask your teacher!" : "No past events yet."}
             </p>
           )}
         </div>

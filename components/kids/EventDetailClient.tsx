@@ -75,11 +75,15 @@ export function EventDetailClient({
   leaderboard,
   hasJoined: initialHasJoined,
   myProgress,
+  joinUrl,
 }: {
   event: WeekendEvent;
   leaderboard: LeaderboardRow[];
   hasJoined: boolean;
   myProgress: number;
+  /** Defaults to the platform weekend-event join route; classroom event
+   * pages pass /api/classroom-events/{id}/join instead. */
+  joinUrl?: string;
 }) {
   const [hasJoined, setHasJoined] = useState(initialHasJoined);
   const [joining, setJoining] = useState(false);
@@ -103,7 +107,7 @@ export function EventDetailClient({
   async function handleJoin() {
     setJoining(true);
     setJoinError("");
-    const res = await fetch(`/api/events/${event.id}/join`, { method: "POST" });
+    const res = await fetch(joinUrl ?? `/api/events/${event.id}/join`, { method: "POST" });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       setJoinError(data.error ?? "Couldn't join right now — try again.");
