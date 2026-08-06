@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { FeedbackSurveyLauncher } from "@/components/feedback/FeedbackSurveyLauncher";
+import { useUnreadMessageCount } from "@/components/messaging/useUnreadMessageCount";
 
 const links = [
   { href: "/teacher/classroom", label: "Classroom" },
@@ -13,12 +14,14 @@ const links = [
   { href: "/teacher/book-lists", label: "Book Lists" },
   { href: "/teacher/challenges", label: "Challenges" },
   { href: "/teacher/book-clubs", label: "Book Clubs" },
+  { href: "/teacher/messages", label: "Messages" },
   { href: "/teacher/settings", label: "Settings" },
 ];
 
 export function TeacherNav() {
   const pathname = usePathname();
   const router = useRouter();
+  const unreadCount = useUnreadMessageCount();
 
   async function signOut() {
     const supabase = createClient();
@@ -36,13 +39,18 @@ export function TeacherNav() {
           <Link
             key={l.href}
             href={l.href}
-            className={`rounded-lg px-3 py-2 text-sm font-medium ${
+            className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium ${
               pathname === l.href
                 ? "bg-indigo-50 text-teacher-primary"
                 : "text-slate-600 hover:bg-slate-50"
             }`}
           >
             {l.label}
+            {l.href === "/teacher/messages" && unreadCount > 0 && (
+              <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
           </Link>
         ))}
       </nav>
