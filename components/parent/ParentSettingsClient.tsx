@@ -19,13 +19,17 @@ const AVATARS = ["🦊", "🐼", "🦁", "🐸", "🦄", "🐨"];
 export function ParentSettingsClient({
   parentId,
   initialChildren,
+  initialAiWeeklySummaryEnabled,
 }: {
   parentId: string;
   initialChildren: ParentChildProfileData[];
+  initialAiWeeklySummaryEnabled: boolean;
 }) {
   const supabase = createClient();
   const router = useRouter();
   const [linkedChildren, setLinkedChildren] = useState<ParentChildProfileData[]>(initialChildren);
+  const [aiWeeklySummaryEnabled, setAiWeeklySummaryEnabled] = useState(initialAiWeeklySummaryEnabled);
+  const [aiToggleSaving, setAiToggleSaving] = useState(false);
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [age, setAge] = useState("8");
@@ -122,6 +126,18 @@ export function ParentSettingsClient({
     }
   }
 
+  async function toggleAiWeeklySummary() {
+    const next = !aiWeeklySummaryEnabled;
+    setAiWeeklySummaryEnabled(next); // optimistic
+    setAiToggleSaving(true);
+    const { error } = await supabase
+      .from("users")
+      .update({ ai_weekly_summary_enabled: next })
+      .eq("id", parentId);
+    setAiToggleSaving(false);
+    if (error) setAiWeeklySummaryEnabled(!next); // revert on failure
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
     window.location.href = "/auth/login";
@@ -130,6 +146,35 @@ export function ParentSettingsClient({
   return (
     <div>
       <h1 className="text-2xl font-bold">Settings</h1>
+
+      <section className="mt-8 rounded-xl bg-white p-6 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="font-semibold">Enhanced AI Weekly Reading Summary</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              By default your weekly digest email uses a simple, free summary. Turn
+              this on for a more personalized, AI-written version of the same email
+              instead. You can switch it off again anytime.
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={aiWeeklySummaryEnabled}
+            disabled={aiToggleSaving}
+            onClick={toggleAiWeeklySummary}
+            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+              aiWeeklySummaryEnabled ? "bg-parent-primary" : "bg-slate-300"
+            } ${aiToggleSaving ? "opacity-60" : ""}`}
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                aiWeeklySummaryEnabled ? "translate-x-5" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </div>
+      </section>
 
       <section className="mt-8">
         <h2 className="font-semibold">Child profiles</h2>

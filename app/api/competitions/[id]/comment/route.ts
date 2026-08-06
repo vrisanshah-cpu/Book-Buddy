@@ -2,19 +2,36 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { callGemini, hasGeminiKey } from "@/lib/gemini";
 import { containsProfanity } from "@/lib/profanity-filter";
+import { needsModerationReview } from "@/lib/comment-risk-heuristics";
 
 const MODERATION_SYSTEM_PROMPT = `You moderate comments kids (ages 5-12) leave on each other's writing-competition stories. Reply with ONLY valid JSON, no markdown: {"approved": true or false}. Reject anything containing bullying, insults, harassment, cruelty, or content unsafe for children. Approve genuine, kind, or neutral feedback (including plain constructive criticism like "the ending felt rushed").`;
 
+// Three-stage moderation, each stage only running if the one before it
+// didn't already decide:
+//  1. Profanity filter (free, instant) -- reject immediately on a match.
+//  2. Heuristic risk check (free, instant) -- catches non-profane
+//     cruelty ("nobody likes this," "you're so stupid"). If nothing
+//     trips it, approve without ever calling Gemini -- this covers the
+//     large majority of comments, which are genuine and kind.
+//  3. Gemini (only for the flagged minority) -- a real judgment call on
+//     comments that might be harsh sarcasm, backhanded "feedback," or
+//     something the keyword list can't cleanly resolve either way.
+// This keeps a real safety net for the cases that matter while cutting
+// Gemini calls to a small fraction of total comment volume.
 async function isCommentApproved(text: string): Promise<boolean> {
   if (containsProfanity(text)) return false;
-  if (!hasGeminiKey()) return true; // fail-open to plain profanity filtering only, matching other AI-optional features
+  if (!needsModerationReview(text)) return true;
+  if (!hasGeminiKey()) return false; // flagged as risky and no AI available -- reject rather than fail-open
 
   try {
-    const raw = await callGemini(MODERATION_SYSTEM_PROMPT, [{ role: "user", text }], { jsonMode: true });
+    const raw = await callGemini(MODERATION_SYSTEM_PROMPT, [{ role: "user", text }], {
+      jsonMode: true,
+      tier: "lite",
+    });
     const parsed = JSON.parse(raw);
     return Boolean(parsed.approved);
   } catch {
-    return true;
+    return false; // flagged as risky and Gemini failed -- reject rather than fail-open
   }
 }
 

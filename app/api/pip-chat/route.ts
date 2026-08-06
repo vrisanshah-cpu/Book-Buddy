@@ -62,7 +62,7 @@ export async function POST(request: Request) {
 
   let reply: string;
   try {
-    reply = await callGemini(finalSystemPrompt, turns);
+    reply = await callGemini(finalSystemPrompt, turns, { tier: "lite" });
   } catch {
     return NextResponse.json(
       { error: "Pip is taking a nap. Try again in a bit!" },

@@ -32,18 +32,42 @@ function buildFallbackDigestText(children: ChildStats[]): string {
     .join("\n\n");
 }
 
-async function buildDigestText(children: ChildStats[]): Promise<string> {
-  if (!hasGeminiKey()) return buildFallbackDigestText(children);
+function hasMeaningfulActivity(children: ChildStats[]): boolean {
+  return children.some(
+    (c) => c.minutesThisWeek > 0 || c.booksFinishedThisWeek > 0 || c.newBadges.length > 0
+  );
+}
 
+// AI summaries are opt-in (Parent Settings > "Enhanced AI Weekly Reading
+// Summary", default OFF) -- every parent gets the free template digest
+// unless they've explicitly turned this on. Cached per parent+week+data
+// so a duplicate cron execution reuses the same summary instead of
+// re-generating it. No retry on failure -- fall straight back to the
+// template.
+async function buildDigestText(
+  children: ChildStats[],
+  opts: { aiEnabled: boolean; weekKey: string }
+): Promise<string> {
+  if (!opts.aiEnabled || !hasGeminiKey()) return buildFallbackDigestText(children);
+  if (!hasMeaningfulActivity(children)) return buildFallbackDigestText(children);
+
+  // Deliberately terse to keep token usage down -- no extra framing, no
+  // restated instructions beyond what's in the system prompt.
   const prompt = children
     .map(
       (c) =>
-        `${c.displayName}: ${c.minutesThisWeek} minutes read, ${c.booksFinishedThisWeek} books finished, ${c.newBadges.length} new badges (${c.newBadges.join(", ") || "none"}), ${c.currentStreak}-day current streak.`
+        `${c.displayName}: ${c.minutesThisWeek}min, ${c.booksFinishedThisWeek} books, badges: ${c.newBadges.join(", ") || "none"}, streak: ${c.currentStreak}d.`
     )
     .join("\n");
 
+  const cacheKey = `parent-digest:v1:${opts.weekKey}:${prompt}`;
+
   try {
-    return await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }]);
+    return await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }], {
+      tier: "lite",
+      cacheKey,
+      cacheTtlMinutes: 60 * 24 * 3,
+    });
   } catch {
     return buildFallbackDigestText(children);
   }
@@ -74,10 +98,17 @@ export async function GET(request: Request) {
   const admin = createAdminClient();
   let digestsSent = 0;
 
-  const { data: parents } = await admin.from("users").select("id, display_name, email").eq("role", "parent").not("email", "is", null);
+  const { data: parents } = await admin
+    .from("users")
+    .select("id, display_name, email, ai_weekly_summary_enabled")
+    .eq("role", "parent")
+    .not("email", "is", null);
 
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
+  // Coarse weekly bucket for the cache key -- stable across retries of
+  // the same cron run within the same week, changes naturally next week.
+  const weekKey = weekAgo.toISOString().split("T")[0];
 
   for (const parent of parents ?? []) {
     const { data: links } = await admin.from("parent_child").select("child_id").eq("parent_id", parent.id);
@@ -126,7 +157,10 @@ export async function GET(request: Request) {
 
     if (childStats.length === 0) continue;
 
-    const summaryText = await buildDigestText(childStats);
+    const summaryText = await buildDigestText(childStats, {
+      aiEnabled: Boolean(parent.ai_weekly_summary_enabled),
+      weekKey,
+    });
     const result = await sendEmail({
       to: parent.email as string,
       subject: "Your weekly Book Buddy digest 📚",

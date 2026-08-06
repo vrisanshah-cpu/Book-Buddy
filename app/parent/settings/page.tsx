@@ -22,5 +22,17 @@ export default async function ParentSettingsPage() {
     };
   });
 
-  return <ParentSettingsClient parentId={user.id} initialChildren={linkedChildProfiles} />;
+  const { data: settingsRow } = await supabase
+    .from("users")
+    .select("ai_weekly_summary_enabled")
+    .eq("id", user.id)
+    .single();
+
+  return (
+    <ParentSettingsClient
+      parentId={user.id}
+      initialChildren={linkedChildProfiles}
+      initialAiWeeklySummaryEnabled={Boolean(settingsRow?.ai_weekly_summary_enabled)}
+    />
+  );
 }

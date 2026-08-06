@@ -43,7 +43,16 @@ export async function POST() {
     (blockLines.length > 0 ? `\n\nContent restrictions from this child's parent/teacher:\n${blockLines.join("\n")}` : "");
 
   try {
-    const raw = await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }], { jsonMode: true });
+    // Cached on the shelf contents + active content restrictions, not the
+    // user id -- two kids with the same shelf and no restrictions get the
+    // same cached recommendations. Short TTL since a shelf changes often.
+    const cacheKey = `recommend:v1:${[...readBooks].sort().join("|")}::${blockLines.join("|")}`;
+    const raw = await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }], {
+      jsonMode: true,
+      tier: "lite",
+      cacheKey,
+      cacheTtlMinutes: 60 * 12,
+    });
     const parsed = JSON.parse(raw);
     // Prompt-level exclusion is best-effort — always enforce authoritatively here too.
     parsed.recommendations = filterBlockedBooks(blocks, parsed.recommendations ?? []);

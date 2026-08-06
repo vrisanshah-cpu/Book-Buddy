@@ -40,6 +40,10 @@ export async function POST(request: Request) {
     }
 
     try {
+      // Same book -> same quiz for every kid who reads it, so this is
+      // cached by title+author only (never by user id). Long TTL since a
+      // book's quiz has no reason to change.
+      const cacheKey = `quiz:v1:${(title ?? "").trim().toLowerCase()}:${(author ?? "").trim().toLowerCase()}`;
       const raw = await callGemini(
         QUIZ_SYSTEM_PROMPT,
         [
@@ -48,7 +52,7 @@ export async function POST(request: Request) {
             text: `Book: "${title}" by ${author}. ${description ? `Summary: ${description}` : ""}`,
           },
         ],
-        { jsonMode: true }
+        { jsonMode: true, tier: "lite", cacheKey, cacheTtlMinutes: 60 * 24 * 90 }
       );
       const parsed = JSON.parse(raw.replace(/```json\n?|\n?```/g, "").trim());
       return NextResponse.json(parsed);

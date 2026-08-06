@@ -4,8 +4,31 @@ import { callGemini, hasGeminiKey } from "@/lib/gemini";
 
 const FEEDBACK_SYSTEM_PROMPT = `You give short, warm, encouraging writing feedback to kids ages 5-12 who just submitted a story to a writing competition. 2-4 sentences: point out one specific thing they did well, then one gentle, constructive suggestion. Age-appropriate, kind, never harsh. Plain text, no markdown.`;
 
+// AI feedback is now opt-in infrastructure, not the default -- every
+// submission used to trigger a Gemini call for feedback that isn't
+// essential to the feature. Set ENABLE_AI_STORY_FEEDBACK=true to restore
+// the old behavior. Default (unset/false) uses these hardcoded messages
+// instead, at zero API cost.
+const ENCOURAGING_FALLBACKS = [
+  (title: string) =>
+    `Great work finishing "${title}"! Keep practicing descriptive details in your next story — try adding what a character sees, hears, or feels.`,
+  (title: string) =>
+    `You did it — "${title}" is finished! One thing to try next time: give your main character a clear want, then a problem standing in the way.`,
+  (title: string) =>
+    `"${title}" is done and that's worth celebrating! For your next story, try starting in the middle of the action instead of at the very beginning.`,
+  (title: string) =>
+    `Nice job finishing "${title}"! Next time, try reading your story out loud — it's a great way to catch spots that could use more detail.`,
+  (title: string) =>
+    `You finished "${title}" — awesome! A fun challenge for next time: give your story a surprising ending nobody would expect.`,
+];
+
 function fallbackFeedback(title: string): string {
-  return `Great work finishing "${title}"! Keep practicing descriptive details in your next story — try adding what a character sees, hears, or feels.`;
+  const pick = ENCOURAGING_FALLBACKS[Math.floor(Math.random() * ENCOURAGING_FALLBACKS.length)];
+  return pick(title);
+}
+
+function aiFeedbackEnabled(): boolean {
+  return process.env.ENABLE_AI_STORY_FEEDBACK === "true";
 }
 
 export async function POST(request: Request, { params }: { params: { id: string } }) {
@@ -35,9 +58,13 @@ export async function POST(request: Request, { params }: { params: { id: string 
   }
 
   let aiFeedback: string;
-  if (hasGeminiKey()) {
+  if (aiFeedbackEnabled() && hasGeminiKey()) {
     try {
-      aiFeedback = await callGemini(FEEDBACK_SYSTEM_PROMPT, [{ role: "user", text: `Title: ${title}\n\n${content}` }]);
+      aiFeedback = await callGemini(
+        FEEDBACK_SYSTEM_PROMPT,
+        [{ role: "user", text: `Title: ${title}\n\n${content}` }],
+        { tier: "lite" }
+      );
     } catch {
       aiFeedback = fallbackFeedback(title);
     }
