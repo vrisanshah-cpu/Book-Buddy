@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getProfile, createClient } from "@/lib/supabase/server";
 import { TeacherChallengesClient } from "@/components/teacher/TeacherChallengesClient";
+import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
 
 export default async function TeacherChallengesPage() {
   const { user, profile } = await getProfile();
@@ -13,9 +14,12 @@ export default async function TeacherChallengesPage() {
     .eq("teacher_id", user.id);
 
   return (
-    <TeacherChallengesClient
-      teacherId={user.id}
-      classrooms={classrooms ?? []}
-    />
+    <>
+      <GoogleAdsense />
+      <TeacherChallengesClient
+        teacherId={user.id}
+        classrooms={classrooms ?? []}
+      />
+    </>
   );
 }

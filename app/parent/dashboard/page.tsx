@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getProfile, createClient } from "@/lib/supabase/server";
 import { calculateStreak, sumMinutesInRange } from "@/lib/reading-stats";
 import Link from "next/link";
+import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
 
 export default async function ParentDashboardPage() {
   const { profile } = await getProfile();
@@ -64,6 +65,7 @@ export default async function ParentDashboardPage() {
 
   return (
     <div>
+      <GoogleAdsense />
       <h1 className="text-2xl font-bold text-slate-900">
         Welcome, {profile.display_name}
       </h1>

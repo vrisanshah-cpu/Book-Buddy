@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getProfile, createClient } from "@/lib/supabase/server";
 import { TeacherBookListsClient } from "@/components/teacher/TeacherBookListsClient";
 import { FeaturedBooksManager } from "@/components/teacher/FeaturedBooksManager";
+import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
 
 export default async function TeacherBookListsPage() {
   const { user, profile } = await getProfile();
@@ -12,6 +13,7 @@ export default async function TeacherBookListsPage() {
 
   return (
     <>
+      <GoogleAdsense />
       <TeacherBookListsClient teacherId={user.id} classrooms={classrooms ?? []} />
       <FeaturedBooksManager classrooms={classrooms ?? []} />
     </>

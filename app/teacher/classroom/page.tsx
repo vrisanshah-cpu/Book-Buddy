@@ -1,6 +1,7 @@
 import { getProfile } from "@/lib/supabase/server";
 import { createClient } from "@/lib/supabase/server";
 import { CreateClassroomForm } from "@/components/teacher/CreateClassroomForm";
+import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
 
 export default async function TeacherClassroomPage() {
   const { profile } = await getProfile();
@@ -18,6 +19,7 @@ export default async function TeacherClassroomPage() {
 
   return (
     <div>
+      <GoogleAdsense />
       <h1 className="text-2xl font-bold text-slate-900">Classroom</h1>
       <p className="mt-1 text-teacher-muted">
         {profile?.school_name ? `${profile.school_name} · ` : ""}

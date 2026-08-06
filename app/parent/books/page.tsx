@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getProfile, createClient } from "@/lib/supabase/server";
 import { ParentBooksClient } from "@/components/parent/ParentBooksClient";
+import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
 
 export default async function ParentBooksPage() {
   const { user, profile } = await getProfile();
@@ -17,5 +18,10 @@ export default async function ParentBooksPage() {
     return childData as { id: string; display_name: string };
   });
 
-  return <ParentBooksClient initialChildren={linkedChildProfiles} />;
+  return (
+    <>
+      <GoogleAdsense />
+      <ParentBooksClient initialChildren={linkedChildProfiles} />
+    </>
+  );
 }

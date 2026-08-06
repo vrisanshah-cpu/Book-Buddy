@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getProfile, createClient } from "@/lib/supabase/server";
 import { ClassroomAnalytics } from "@/components/teacher/ClassroomAnalytics";
+import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
 
 const NEEDS_ATTENTION_DAYS = 14;
 
@@ -69,6 +70,9 @@ export default async function TeacherAnalyticsPage() {
     .slice(0, 8);
 
   return (
-    <ClassroomAnalytics students={studentSummaries} topBooks={topBooks} needsAttentionDays={NEEDS_ATTENTION_DAYS} />
+    <>
+      <GoogleAdsense />
+      <ClassroomAnalytics students={studentSummaries} topBooks={topBooks} needsAttentionDays={NEEDS_ATTENTION_DAYS} />
+    </>
   );
 }
