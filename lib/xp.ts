@@ -5,6 +5,7 @@ export const XP_REWARDS = {
   perfect_quiz: 75,
   booktok_post: 15,
   streak_7: 200,
+  buddy_challenge_complete: 150,
 } as const;
 
 export function getLevel(xp: number) {

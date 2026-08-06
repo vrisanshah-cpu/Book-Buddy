@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { awardXp, syncChallengeProgress } from "@/lib/challenges";
+import { awardXp, syncChallengeProgress, syncBuddyProgressForKid } from "@/lib/challenges";
 import { XP_REWARDS } from "@/lib/xp";
 import { calculateStreak } from "@/lib/reading-stats";
 import { syncActiveEventProgress } from "@/lib/weekend-events";
@@ -69,7 +69,11 @@ export async function POST(request: Request) {
     // can never block the XP/streak/challenge results the kid is already
     // waiting on.
     const [, cardResult] = await Promise.all([
-      Promise.all([syncActiveEventProgress(supabase, user.id), syncActiveClassroomEventProgress(supabase, user.id)]),
+      Promise.all([
+        syncActiveEventProgress(supabase, user.id),
+        syncActiveClassroomEventProgress(supabase, user.id),
+        syncBuddyProgressForKid(user.id),
+      ]),
       (async () => {
         try {
           // "Boosted" = any weekend event is currently running, not

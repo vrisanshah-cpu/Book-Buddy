@@ -24,6 +24,7 @@ const moreLinks = [
   { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
   { href: "/kids/shop", label: "Shop", emoji: "🛍️" },
   { href: "/kids/trades", label: "Trades", emoji: "🔄" },
+  { href: "/kids/buddy", label: "Buddy Reading", emoji: "🤝" },
   { href: "/kids/messages", label: "Messages", emoji: "💬" },
   { href: "/kids/settings", label: "Settings", emoji: "⚙️" },
 ];

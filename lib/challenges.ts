@@ -215,3 +215,79 @@ export async function enrollInAvailableChallenges(
     );
   }
 }
+
+type BuddyGoalType = "books_count" | "minutes_read";
+
+async function scoreKidForBuddyGoal(
+  admin: SupabaseClient,
+  kidId: string,
+  goalType: BuddyGoalType,
+  startsAt: string,
+  endsAt: string
+): Promise<number> {
+  if (goalType === "books_count") {
+    const { count } = await admin
+      .from("user_books")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", kidId)
+      .eq("status", "finished")
+      .gte("finished_at", startsAt)
+      .lte("finished_at", endsAt);
+    return count ?? 0;
+  }
+
+  const { data } = await admin
+    .from("reading_sessions")
+    .select("minutes_read")
+    .eq("user_id", kidId)
+    .gte("date", startsAt.slice(0, 10))
+    .lte("date", endsAt.slice(0, 10));
+  return (data ?? []).reduce((sum, r) => sum + (r.minutes_read ?? 0), 0);
+}
+
+/**
+ * Called after a kid logs a reading session (app/api/reading/log) — for
+ * every active buddy pair they're in, re-scores BOTH kids (always via the
+ * admin client: a kid's own session can never read a buddy's private
+ * reading data, by design) and awards a shared XP bonus to both the
+ * moment combined_progress reaches the target.
+ */
+export async function syncBuddyProgressForKid(kidId: string): Promise<void> {
+  const admin = createAdminClient();
+  const nowIso = new Date().toISOString();
+
+  const { data: pairs } = await admin
+    .from("buddy_pairs")
+    .select(
+      "id, challenge_id, kid_a_id, kid_b_id, completed_at, challenge:buddy_challenges(id, goal_type, target, status, starts_at, ends_at)"
+    )
+    .or(`kid_a_id.eq.${kidId},kid_b_id.eq.${kidId}`);
+
+  for (const pair of pairs ?? []) {
+    const challenge = Array.isArray(pair.challenge) ? pair.challenge[0] : pair.challenge;
+    if (!challenge || challenge.status !== "active" || pair.completed_at) continue;
+
+    if (challenge.ends_at <= nowIso) {
+      await admin.from("buddy_challenges").update({ status: "expired" }).eq("id", challenge.id);
+      continue;
+    }
+
+    const [scoreA, scoreB] = await Promise.all([
+      scoreKidForBuddyGoal(admin, pair.kid_a_id, challenge.goal_type, challenge.starts_at, challenge.ends_at),
+      scoreKidForBuddyGoal(admin, pair.kid_b_id, challenge.goal_type, challenge.starts_at, challenge.ends_at),
+    ]);
+    const combined = scoreA + scoreB;
+    const justCompleted = combined >= challenge.target;
+
+    await admin
+      .from("buddy_pairs")
+      .update({ combined_progress: combined, completed_at: justCompleted ? nowIso : null })
+      .eq("id", pair.id);
+
+    if (justCompleted) {
+      await admin.from("buddy_challenges").update({ status: "completed" }).eq("id", challenge.id);
+      await awardXp(admin, pair.kid_a_id, XP_REWARDS.buddy_challenge_complete);
+      await awardXp(admin, pair.kid_b_id, XP_REWARDS.buddy_challenge_complete);
+    }
+  }
+}
