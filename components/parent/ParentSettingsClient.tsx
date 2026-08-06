@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { ContentBlocksManager } from "@/components/content-blocks/ContentBlocksManager";
 
 interface ParentChildProfileData {
   id: string;
@@ -162,6 +163,15 @@ export function ParentSettingsClient({
             </li>
           ))}
         </ul>
+      </section>
+
+      <section className="mt-8">
+        <ContentBlocksManager
+          scope="child"
+          blockerId={parentId}
+          targets={linkedChildren.map((c) => ({ id: c.id, label: c.display_name }))}
+          emptyTargetsMessage="Add a child profile first, then you can set content controls for them."
+        />
       </section>
 
       <section className="mt-8 rounded-xl bg-white p-6 shadow-sm">

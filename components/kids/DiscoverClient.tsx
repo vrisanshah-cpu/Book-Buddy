@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { createClient } from "@/lib/supabase/client";
 import { searchByAuthor } from "@/lib/open-library";
+import { getEffectiveBlocksForKid, filterBlockedBooks, type EffectiveBlocks } from "@/lib/content-blocks";
 
 interface Rec {
   title: string;
@@ -80,6 +81,30 @@ export function DiscoverClient() {
   const [authorQuery, setAuthorQuery] = useState("");
   const [authorResults, setAuthorResults] = useState<AuthorBook[]>([]);
   const [searchingAuthor, setSearchingAuthor] = useState(false);
+  const [authorBlockedMessage, setAuthorBlockedMessage] = useState("");
+
+  const [blocks, setBlocks] = useState<EffectiveBlocks>({
+    blockedBookIds: new Set(),
+    blockedAuthors: new Set(),
+    blockedKeywords: [],
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadBlocks() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+      const effective = await getEffectiveBlocksForKid(supabase, user.id);
+      if (!cancelled) setBlocks(effective);
+    }
+    void loadBlocks();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadRecs() {
     setLoadingRecs(true);
@@ -92,7 +117,7 @@ export function DiscoverClient() {
       return;
     }
     if (res.ok) {
-      setRecs(data.recommendations ?? []);
+      setRecs(filterBlockedBooks(blocks, data.recommendations ?? []));
     } else {
       setRecError(data.error ?? "Something went wrong.");
     }
@@ -101,7 +126,7 @@ export function DiscoverClient() {
   async function loadFeatured() {
     const siteRes = await fetch("/api/books/featured");
     const siteData = await siteRes.json();
-    setSiteFeatured(siteData.books ?? []);
+    setSiteFeatured(filterBlockedBooks(blocks, siteData.books ?? []));
 
     const { data: link } = await supabase
       .from("teacher_student")
@@ -117,9 +142,12 @@ export function DiscoverClient() {
         .select("book_id, book:books(id, title, author, cover_url, description)")
         .eq("classroom_id", link.classroom_id);
       setClassroomFeatured(
-        (data ?? [])
-          .map((r) => (Array.isArray(r.book) ? r.book[0] : r.book))
-          .filter((b): b is FeaturedBook => Boolean(b))
+        filterBlockedBooks(
+          blocks,
+          (data ?? [])
+            .map((r) => (Array.isArray(r.book) ? r.book[0] : r.book))
+            .filter((b): b is FeaturedBook => Boolean(b))
+        )
       );
     } else {
       setInClassroom(false);
@@ -140,8 +168,15 @@ export function DiscoverClient() {
 
   async function searchAuthor() {
     if (!authorQuery.trim()) return;
+    setAuthorBlockedMessage("");
+    if (blocks.blockedAuthors.has(authorQuery.trim().toLowerCase())) {
+      setAuthorResults([]);
+      setAuthorBlockedMessage("This author isn't available because of a content setting from your parent or teacher.");
+      return;
+    }
     setSearchingAuthor(true);
-    setAuthorResults(await searchByAuthor(authorQuery.trim()));
+    const results = await searchByAuthor(authorQuery.trim());
+    setAuthorResults(filterBlockedBooks(blocks, results));
     setSearchingAuthor(false);
   }
 
@@ -246,6 +281,7 @@ export function DiscoverClient() {
               <BookCard key={`${b.title}-${i}`} book={b} added={added.has(b.title)} onAdd={() => addToWantToRead(b.title, b.author)} />
             ))}
           </div>
+          {authorBlockedMessage && <p className="mt-3 text-sm text-red-600">{authorBlockedMessage}</p>}
         </section>
       )}
     </div>

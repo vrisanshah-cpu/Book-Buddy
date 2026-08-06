@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { callGemini, hasGeminiKey } from "@/lib/gemini";
+import { getEffectiveBlocksForKid, filterBlockedBooks, describeBlocksForPrompt } from "@/lib/content-blocks";
 
 const SYSTEM_PROMPT = `You recommend books to children ages 5-12 based on what they've already read.
 Return ONLY valid JSON, no markdown fences, in this exact shape:
@@ -32,14 +33,20 @@ export async function POST() {
     })
     .filter(Boolean);
 
+  const blocks = await getEffectiveBlocksForKid(supabase, user.id);
+  const blockLines = describeBlocksForPrompt(blocks);
+
   const prompt =
-    readBooks.length > 0
+    (readBooks.length > 0
       ? `Here is the child's reading list so far:\n${readBooks.join("\n")}\n\nRecommend 5 new books they'd probably love.`
-      : `This child hasn't logged any books yet. Recommend 5 great, popular books for kids ages 5-12 across different genres.`;
+      : `This child hasn't logged any books yet. Recommend 5 great, popular books for kids ages 5-12 across different genres.`) +
+    (blockLines.length > 0 ? `\n\nContent restrictions from this child's parent/teacher:\n${blockLines.join("\n")}` : "");
 
   try {
     const raw = await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }], { jsonMode: true });
     const parsed = JSON.parse(raw);
+    // Prompt-level exclusion is best-effort — always enforce authoritatively here too.
+    parsed.recommendations = filterBlockedBooks(blocks, parsed.recommendations ?? []);
     return NextResponse.json(parsed);
   } catch {
     return NextResponse.json({ error: "Couldn't get recommendations right now." }, { status: 500 });

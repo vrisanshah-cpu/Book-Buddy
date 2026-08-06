@@ -11,6 +11,7 @@ const links = [
   { href: "/teacher/book-lists", label: "Book Lists" },
   { href: "/teacher/challenges", label: "Challenges" },
   { href: "/teacher/book-clubs", label: "Book Clubs" },
+  { href: "/teacher/settings", label: "Settings" },
 ];
 
 export function TeacherNav() {

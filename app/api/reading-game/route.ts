@@ -4,6 +4,7 @@ import { awardXp, syncChallengeProgress } from "@/lib/challenges";
 import { XP_REWARDS } from "@/lib/xp";
 import { buildDemoQuiz } from "@/lib/demo-quiz";
 import { callGemini, hasGeminiKey } from "@/lib/gemini";
+import { getEffectiveBlocksForKid, isBookBlocked } from "@/lib/content-blocks";
 
 const QUIZ_SYSTEM_PROMPT = `You are a reading comprehension quiz generator for children ages 5-12.
 Generate exactly 5 multiple choice questions about the book provided.
@@ -25,6 +26,14 @@ export async function POST(request: Request) {
 
   if (action === "generate") {
     const { title, author, description } = body;
+
+    const blocks = await getEffectiveBlocksForKid(supabase, user.id);
+    if (isBookBlocked(blocks, { title, author })) {
+      return NextResponse.json(
+        { error: "This book isn't available because of a content setting from your parent or teacher." },
+        { status: 403 }
+      );
+    }
 
     if (!hasGeminiKey()) {
       return NextResponse.json(buildDemoQuiz(title ?? "this book", author ?? "the author"));

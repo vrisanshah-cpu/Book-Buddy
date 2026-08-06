@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { callGemini, hasGeminiKey } from "@/lib/gemini";
+import { getEffectiveBlocksForKid, describeBlocksForPrompt } from "@/lib/content-blocks";
 
 const PIP_SYSTEM_PROMPT = `You are Pip, a friendly owl who is a reading buddy for children ages 5-12 inside the Book Buddy app.
 Rules:
@@ -55,9 +56,13 @@ export async function POST(request: Request) {
     ? `${PIP_SYSTEM_PROMPT}\nThe child is currently reading: "${bookTitle}".`
     : PIP_SYSTEM_PROMPT;
 
+  const blockLines = describeBlocksForPrompt(await getEffectiveBlocksForKid(supabase, user.id));
+  const finalSystemPrompt =
+    blockLines.length > 0 ? `${systemPrompt}\n${blockLines.join("\n")}` : systemPrompt;
+
   let reply: string;
   try {
-    reply = await callGemini(systemPrompt, turns);
+    reply = await callGemini(finalSystemPrompt, turns);
   } catch {
     return NextResponse.json(
       { error: "Pip is taking a nap. Try again in a bit!" },

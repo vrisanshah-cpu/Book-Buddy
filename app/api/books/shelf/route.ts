@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { addToShelf, ensureBook } from "@/lib/books";
+import { getEffectiveBlocksForKid, isBookBlocked } from "@/lib/content-blocks";
 import type { BookStatus } from "@/lib/types";
 
 export async function POST(request: Request) {
@@ -31,6 +33,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Not allowed" }, { status: 403 });
     }
     shelfUserId = targetUserId;
+  }
+
+  // Self case: RLS already scopes getEffectiveBlocksForKid correctly via
+  // `supabase`. Parent-for-child case (targetUserId branch above) is a
+  // cross-user read, so use the admin client per this project's rule for
+  // cross-user writes/reads on behalf of a student/child.
+  const blocksClient = shelfUserId === user.id ? supabase : createAdminClient();
+  const blocks = await getEffectiveBlocksForKid(blocksClient, shelfUserId);
+  if (isBookBlocked(blocks, { title, author })) {
+    return NextResponse.json(
+      { error: "This book is blocked by a content setting from a parent or teacher." },
+      { status: 403 }
+    );
   }
 
   try {
