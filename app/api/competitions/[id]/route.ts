@@ -19,7 +19,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
   const { data: submissions } = await supabase
     .from("writing_submissions")
     .select(
-      "id, title, content, ai_feedback, community_votes, is_winner, created_at, author:users!author_id(id, display_name)"
+      "id, title, content, ai_feedback, community_votes, is_winner, created_at, author:users!author_id(id, display_name, equipped_title:titles!equipped_title_id(name))"
     )
     .eq("competition_id", params.id)
     .order("community_votes", { ascending: false });

@@ -7,6 +7,9 @@ import { calculateStreak } from "@/lib/reading-stats";
 import { Button } from "@/components/ui/Button";
 import { JoinClassroomCard } from "@/components/kids/JoinClassroomCard";
 import { ParentLinkCodeCard } from "@/components/kids/ParentLinkCodeCard";
+import { ThemeWrapper } from "@/components/kids/ThemeWrapper";
+import { EquippedSlots } from "@/components/kids/EquippedSlots";
+import type { ThemeConfig } from "@/lib/ai-theme";
 
 export default async function KidsHomePage() {
   const { user, profile } = await getProfile();
@@ -23,6 +26,29 @@ export default async function KidsHomePage() {
     .eq("user_id", user.id);
 
   const streak = calculateStreak(sessions ?? []);
+
+  const { data: ownedBadgeRows } = await supabase
+    .from("user_badges")
+    .select("badge:badges(id, name, icon)")
+    .eq("user_id", user.id);
+  const { data: ownedTitleRows } = await supabase
+    .from("user_titles")
+    .select("title:titles(id, name)")
+    .eq("user_id", user.id);
+
+  type BadgeRef = { id: string; name: string; icon: string };
+  type TitleRef = { id: string; name: string };
+
+  const ownedBadges = ((ownedBadgeRows ?? []) as { badge: BadgeRef | BadgeRef[] | null }[])
+    .map((r) => (Array.isArray(r.badge) ? r.badge[0] : r.badge))
+    .filter((b): b is BadgeRef => Boolean(b));
+  const ownedTitles = ((ownedTitleRows ?? []) as { title: TitleRef | TitleRef[] | null }[])
+    .map((r) => (Array.isArray(r.title) ? r.title[0] : r.title))
+    .filter((t): t is TitleRef => Boolean(t));
+
+  const equippedBadge = ownedBadges.find((b) => b.id === profile?.equipped_badge_id) ?? null;
+  const equippedTitle = ownedTitles.find((t) => t.id === profile?.equipped_title_id) ?? null;
+  const activeTheme = (profile?.active_theme_config as ThemeConfig | null) ?? null;
 
   const { data: currentBook } = await supabase
     .from("user_books")
@@ -70,13 +96,24 @@ export default async function KidsHomePage() {
 
   return (
     <div>
-      <div className="rounded-3xl bg-gradient-to-r from-kids-purple to-kids-teal p-6 text-white shadow-lg">
-        <p className="text-lg opacity-90">Hey, {profile?.display_name ?? "Reader"}! 👋</p>
-        <h1 className="mt-1 font-kids-display text-3xl font-bold">
-          {streak > 0
-            ? `You're on a ${streak}-day streak — amazing!`
-            : "Start reading today to build your streak!"}
-        </h1>
+      <ThemeWrapper theme={activeTheme}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-lg opacity-90">Hey, {profile?.display_name ?? "Reader"}! 👋</p>
+            <h1 className="mt-1 font-kids-display text-3xl font-bold">
+              {streak > 0
+                ? `You're on a ${streak}-day streak — amazing!`
+                : "Start reading today to build your streak!"}
+            </h1>
+          </div>
+          <EquippedSlots
+            avatarUrl={profile?.avatar_url ?? null}
+            ownedBadges={ownedBadges}
+            ownedTitles={ownedTitles}
+            equippedBadge={equippedBadge}
+            equippedTitle={equippedTitle}
+          />
+        </div>
         <div className="mt-6 flex flex-wrap gap-6">
           <div>
             <p className="text-sm opacity-80">Level {level}</p>
@@ -104,7 +141,7 @@ export default async function KidsHomePage() {
             style={{ width: `${progress}%` }}
           />
         </div>
-      </div>
+      </ThemeWrapper>
 
       <section className="mt-8">
         <h2 className="font-kids-display text-xl font-bold text-slate-900">

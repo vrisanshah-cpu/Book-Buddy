@@ -19,7 +19,7 @@ interface Submission {
   ai_feedback: string | null;
   community_votes: number;
   is_winner: boolean;
-  author: { id: string; display_name: string } | null;
+  author: { id: string; display_name: string; equipped_title: { name: string } | null } | null;
 }
 interface Comment {
   id: string;
@@ -165,7 +165,11 @@ export function CompetitionsClient({ currentUserId }: { currentUserId: string })
             <div key={s.id} className="rounded-2xl bg-white p-5 shadow-md">
               <div className="flex items-center justify-between gap-3">
                 <p className="font-semibold text-slate-900">
-                  {s.title} <span className="font-normal text-slate-500">by {s.author?.display_name}</span>
+                  {s.title}{" "}
+                  <span className="font-normal text-slate-500">
+                    by {s.author?.display_name}
+                    {s.author?.equipped_title && <span className="text-violet-500"> · {s.author.equipped_title.name}</span>}
+                  </span>
                   {s.is_winner && <span className="ml-2 text-emerald-600">🏆</span>}
                 </p>
                 {selected.status === "judging" && s.author?.id !== currentUserId && (
