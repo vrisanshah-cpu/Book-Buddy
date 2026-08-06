@@ -47,16 +47,28 @@ export async function GET(request: Request) {
   const { data: kids } = await admin.from("users").select("id, display_name, email").eq("role", "kid");
   const kidList = (kids ?? []) as KidRow[];
 
-  // ---- Daily streak-loss warnings ----
-  // This route runs hourly (see vercel.json) so the event-reminder window
-  // below doesn't miss anything, but a streak warning should only go out
-  // once a day — so it's gated to a single hour (20:00 UTC, i.e. evening
-  // for most of the US) rather than every run.
-  const currentHourUtc = new Date().getUTCHours();
-  const isStreakWarningHour = currentHourUtc === 20;
+  // This route is invoked by three separate Vercel Cron entries (see
+  // vercel.json), each once a day or less -- required on the Hobby plan,
+  // which rejects any schedule that would fire more than once per day.
+  // Each block below is gated to only do real work on its own entry's
+  // exact UTC day+hour, so the three schedules never overlap:
+  //   - streak warnings:      daily,        20:00 UTC  ("0 20 * * *")
+  //   - weekend event starts: Fridays only, 23:00 UTC  ("0 23 * * 5")
+  //   - weekend event ends:   Sundays only, 23:00 UTC  ("0 23 * * 0")
+  // This replaced an hourly poll for events starting/ending "within the
+  // next hour" -- unnecessary, since weekend events always start at
+  // Saturday 00:00 UTC and end at Sunday 23:59:59 UTC (see
+  // getUpcomingWeekendWindow in lib/weekend-events.ts), so the exact
+  // moment to remind at is knowable in advance rather than polled for.
+  const now = new Date();
+  const currentHourUtc = now.getUTCHours();
+  const currentDayUtc = now.getUTCDay(); // 0 = Sunday ... 6 = Saturday
 
-  if (isStreakWarningHour) {
-    const todayKey = new Date().toISOString().split("T")[0];
+  // ---- Daily streak-loss warnings ----
+  const isStreakWarningRun = currentHourUtc === 20;
+
+  if (isStreakWarningRun) {
+    const todayKey = now.toISOString().split("T")[0];
     const tenDaysAgo = new Date();
     tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
     const tenDaysAgoKey = tenDaysAgo.toISOString().split("T")[0];
@@ -83,38 +95,28 @@ export async function GET(request: Request) {
     }
   }
 
-  // ---- Weekend event start/end reminders (next hour) ----
-  const nowIso = new Date().toISOString();
-  const inOneHourIso = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  // ---- Weekend event start reminder (Fridays, ~1hr before Saturday 00:00 UTC start) ----
+  const isEventStartRun = currentDayUtc === 5 && currentHourUtc === 23;
+  // ---- Weekend event end reminder (Sundays, ~1hr before Sunday 23:59:59 UTC end) ----
+  const isEventEndRun = currentDayUtc === 0 && currentHourUtc === 23;
 
-  const { data: startingEvents } = await admin
-    .from("weekend_events")
-    .select("id, title")
-    .eq("status", "upcoming")
-    .gte("starts_at", nowIso)
-    .lte("starts_at", inOneHourIso);
+  if (isEventStartRun || isEventEndRun) {
+    const status = isEventStartRun ? "upcoming" : "active";
+    const { data: events } = await admin
+      .from("weekend_events")
+      .select("id, title")
+      .eq("status", status);
 
-  const { data: endingEvents } = await admin
-    .from("weekend_events")
-    .select("id, title")
-    .eq("status", "active")
-    .gte("ends_at", nowIso)
-    .lte("ends_at", inOneHourIso);
-
-  const eventReminders = [
-    ...(startingEvents ?? []).map((e) => ({ ...e, kind: "starting" as const })),
-    ...(endingEvents ?? []).map((e) => ({ ...e, kind: "ending" as const })),
-  ];
-
-  for (const ev of eventReminders) {
-    const payload =
-      ev.kind === "starting"
+    const payload = (ev: { id: string; title: string }) =>
+      isEventStartRun
         ? { title: `🎉 ${ev.title} starts soon!`, body: "The weekend event begins within the hour — get ready!", url: `/kids/events/${ev.id}` }
         : { title: `⏰ ${ev.title} ends soon!`, body: "Less than an hour left — log your last books to lock in your rank!", url: `/kids/events/${ev.id}` };
 
-    for (const kid of kidList) {
-      await notifyKid(admin, kid, payload);
-      results.eventReminders++;
+    for (const ev of events ?? []) {
+      for (const kid of kidList) {
+        await notifyKid(admin, kid, payload(ev));
+        results.eventReminders++;
+      }
     }
   }
 
