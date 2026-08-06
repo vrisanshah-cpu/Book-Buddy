@@ -11,21 +11,15 @@ const primaryLinks = [
   { href: "/kids/home", label: "Home", emoji: "🏠" },
   { href: "/kids/shelf", label: "Shelf", emoji: "📚" },
   { href: "/kids/discover", label: "Discover", emoji: "🔎" },
-  { href: "/kids/events", label: "Events", emoji: "🏅" },
-  { href: "/kids/collection", label: "Cards", emoji: "🃏" },
 ];
 
+// Only account-y utility links live in the nav's "More" menu now — every
+// feature/game/social link moved onto the home dashboard as tiles
+// (app/kids/home/page.tsx) instead, since 17 links crammed into one
+// toolbar (5 primary + 12 in a dropdown, ALL 17 on mobile) was the
+// actual complaint. Nothing was removed, just relocated to where a
+// dashboard tile fits better than a nav item.
 const moreLinks = [
-  { href: "/kids/challenges", label: "Challenges", emoji: "🏆" },
-  { href: "/kids/leaderboard", label: "Leaderboard", emoji: "🥇" },
-  { href: "/kids/reading-game", label: "Game", emoji: "🎮" },
-  { href: "/kids/booktok", label: "BookTok", emoji: "🎬" },
-  { href: "/kids/book-club", label: "Clubs", emoji: "👥" },
-  { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
-  { href: "/kids/shop", label: "Shop", emoji: "🛍️" },
-  { href: "/kids/trades", label: "Trades", emoji: "🔄" },
-  { href: "/kids/buddy", label: "Buddy Reading", emoji: "🤝" },
-  { href: "/kids/competitions", label: "Writing", emoji: "✍️" },
   { href: "/kids/messages", label: "Messages", emoji: "💬" },
   { href: "/kids/profile", label: "Profile", emoji: "🧑" },
   { href: "/kids/settings", label: "Settings", emoji: "⚙️" },

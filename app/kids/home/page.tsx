@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getProfile, createClient } from "@/lib/supabase/server";
 import { getLevel, xpProgressInLevel } from "@/lib/xp";
 import { calculateStreak } from "@/lib/reading-stats";
+import { getEquippedCosmetics } from "@/lib/equipped-cosmetics";
 import { Button } from "@/components/ui/Button";
 import { JoinClassroomCard } from "@/components/kids/JoinClassroomCard";
 import { ParentLinkCodeCard } from "@/components/kids/ParentLinkCodeCard";
@@ -49,6 +50,7 @@ export default async function KidsHomePage() {
   const equippedBadge = ownedBadges.find((b) => b.id === profile?.equipped_badge_id) ?? null;
   const equippedTitle = ownedTitles.find((t) => t.id === profile?.equipped_title_id) ?? null;
   const activeTheme = (profile?.active_theme_config as ThemeConfig | null) ?? null;
+  const cosmetics = await getEquippedCosmetics(supabase, profile);
 
   const { data: currentBook } = await supabase
     .from("user_books")
@@ -74,15 +76,26 @@ export default async function KidsHomePage() {
     .eq("completed", false)
     .limit(3);
 
-  const quickLinks = [
-    { href: "/kids/shelf", label: "My Shelf", emoji: "📚" },
+  const exploreLinks = [
     { href: "/kids/discover", label: "Discover", emoji: "🔎" },
+    { href: "/kids/events", label: "Events", emoji: "🏅" },
+    { href: "/kids/collection", label: "Cards", emoji: "🃏" },
     { href: "/kids/challenges", label: "Challenges", emoji: "🏆" },
     { href: "/kids/leaderboard", label: "Leaderboard", emoji: "🥇" },
     { href: "/kids/reading-game", label: "Reading Game", emoji: "🎮" },
+  ];
+
+  const socialLinks = [
     { href: "/kids/book-club", label: "Book Club", emoji: "👥" },
     { href: "/kids/booktok", label: "BookTok", emoji: "🎬" },
+    { href: "/kids/buddy", label: "Buddy Reading", emoji: "🤝" },
+    { href: "/kids/competitions", label: "Writing", emoji: "✍️" },
     { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
+  ];
+
+  const shopLinks = [
+    { href: "/kids/shop", label: "Shop", emoji: "🛍️" },
+    { href: "/kids/trades", label: "Trades", emoji: "🔄" },
   ];
 
   const bookData = Array.isArray(currentBook?.book)
@@ -112,6 +125,8 @@ export default async function KidsHomePage() {
             ownedTitles={ownedTitles}
             equippedBadge={equippedBadge}
             equippedTitle={equippedTitle}
+            equippedAccessory={cosmetics.accessory}
+            equippedPet={cosmetics.pet}
           />
         </div>
         <div className="mt-6 flex flex-wrap gap-6">
@@ -231,9 +246,41 @@ export default async function KidsHomePage() {
       {!hasParentLinked && <ParentLinkCodeCard />}
 
       <section className="mt-8">
-        <h2 className="font-kids-display text-xl font-bold text-slate-900">Quick links</h2>
+        <h2 className="font-kids-display text-xl font-bold text-slate-900">Explore & play</h2>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {quickLinks.map((l) => (
+          {exploreLinks.map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              className="rounded-2xl bg-white p-4 shadow-md transition hover:shadow-lg"
+            >
+              <span className="text-2xl">{l.emoji}</span>
+              <p className="mt-2 font-semibold text-slate-800">{l.label}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="font-kids-display text-xl font-bold text-slate-900">Friends & sharing</h2>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {socialLinks.map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              className="rounded-2xl bg-white p-4 shadow-md transition hover:shadow-lg"
+            >
+              <span className="text-2xl">{l.emoji}</span>
+              <p className="mt-2 font-semibold text-slate-800">{l.label}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="font-kids-display text-xl font-bold text-slate-900">Shop & trade</h2>
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {shopLinks.map((l) => (
             <Link
               key={l.href}
               href={l.href}
