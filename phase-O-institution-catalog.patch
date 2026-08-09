@@ -1,0 +1,575 @@
+diff --git a/app/admin/institution-catalog/page.tsx b/app/admin/institution-catalog/page.tsx
+new file mode 100644
+index 0000000..87f03db
+--- /dev/null
++++ b/app/admin/institution-catalog/page.tsx
+@@ -0,0 +1,10 @@
++import { redirect } from "next/navigation";
++import { getProfile } from "@/lib/supabase/server";
++import { InstitutionCatalogClient } from "@/components/admin/InstitutionCatalogClient";
++
++export default async function InstitutionCatalogPage() {
++  const { user, profile } = await getProfile();
++  if (!user || !profile?.is_admin) redirect("/auth/login");
++
++  return <InstitutionCatalogClient />;
++}
+diff --git a/app/api/admin/institution-catalog/route.ts b/app/api/admin/institution-catalog/route.ts
+new file mode 100644
+index 0000000..69d2a6c
+--- /dev/null
++++ b/app/api/admin/institution-catalog/route.ts
+@@ -0,0 +1,94 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++
++interface BookRow {
++  isbn: string;
++  title: string;
++  author: string;
++  available_copies?: number;
++}
++
++async function requireAdmin() {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return { supabase, error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
++
++  const { data: profile } = await supabase.from("users").select("is_admin").eq("id", user.id).single();
++  if (!profile?.is_admin) return { supabase, error: NextResponse.json({ error: "Admin only" }, { status: 403 }) };
++
++  return { supabase, error: null };
++}
++
++export async function GET() {
++  const { supabase, error } = await requireAdmin();
++  if (error) return error;
++
++  const { data: institutions } = await supabase
++    .from("institutions")
++    .select("id, name, code, type, created_at")
++    .order("created_at", { ascending: false });
++
++  const { data: bookCounts } = await supabase.from("institution_books").select("institution_id");
++  const counts = new Map<string, number>();
++  for (const row of bookCounts ?? []) {
++    counts.set(row.institution_id, (counts.get(row.institution_id) ?? 0) + 1);
++  }
++
++  return NextResponse.json({
++    institutions: (institutions ?? []).map((i) => ({ ...i, bookCount: counts.get(i.id) ?? 0 })),
++  });
++}
++
++export async function POST(request: Request) {
++  const { supabase, error } = await requireAdmin();
++  if (error) return error;
++
++  const body = await request.json();
++
++  if (body.action === "create_institution") {
++    const { name, code, type } = body;
++    if (!name?.trim() || !code?.trim() || !["school", "company"].includes(type)) {
++      return NextResponse.json({ error: "Missing or invalid fields" }, { status: 400 });
++    }
++    const { data: institution, error: insertError } = await supabase
++      .from("institutions")
++      .insert({ name: name.trim(), code: code.trim(), type })
++      .select()
++      .single();
++    if (insertError) return NextResponse.json({ error: insertError.message }, { status: 400 });
++    return NextResponse.json({ institution });
++  }
++
++  if (body.action === "upload_books") {
++    const { institutionId, books } = body as { institutionId: string; books: BookRow[] };
++    if (!institutionId || !Array.isArray(books) || books.length === 0) {
++      return NextResponse.json({ error: "Missing institutionId or books" }, { status: 400 });
++    }
++
++    const rows = books
++      .filter((b) => b.isbn?.trim() && b.title?.trim() && b.author?.trim())
++      .map((b) => ({
++        institution_id: institutionId,
++        isbn: b.isbn.trim(),
++        title: b.title.trim(),
++        author: b.author.trim(),
++        available_copies: Number.isFinite(b.available_copies) ? Number(b.available_copies) : 1,
++      }));
++
++    if (rows.length === 0) {
++      return NextResponse.json({ error: "No valid rows (each needs isbn, title, author)" }, { status: 400 });
++    }
++
++    const { error: upsertError } = await supabase
++      .from("institution_books")
++      .upsert(rows, { onConflict: "institution_id,isbn" });
++
++    if (upsertError) return NextResponse.json({ error: upsertError.message }, { status: 400 });
++
++    return NextResponse.json({ ok: true, uploaded: rows.length });
++  }
++
++  return NextResponse.json({ error: "Unknown action" }, { status: 400 });
++}
+diff --git a/app/api/books/search/route.ts b/app/api/books/search/route.ts
+new file mode 100644
+index 0000000..97e1ea4
+--- /dev/null
++++ b/app/api/books/search/route.ts
+@@ -0,0 +1,39 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { searchOpenLibrary, searchByAuthor } from "@/lib/open-library";
++import { crossReferenceInstitutionCatalog } from "@/lib/institution-catalog";
++import { getEffectiveBlocksForKid, filterBlockedBooks } from "@/lib/content-blocks";
++
++export async function GET(request: Request) {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++
++  const { searchParams } = new URL(request.url);
++  const query = searchParams.get("q")?.trim();
++  const type = searchParams.get("type") === "author" ? "author" : "title";
++  if (!query) return NextResponse.json({ error: "Missing q" }, { status: 400 });
++
++  const [results, blocks, profile] = await Promise.all([
++    type === "author" ? searchByAuthor(query) : searchOpenLibrary(query),
++    getEffectiveBlocksForKid(supabase, user.id),
++    supabase.from("users").select("institution_id").eq("id", user.id).single(),
++  ]);
++
++  const filtered = filterBlockedBooks(blocks, results);
++
++  const institutionMatches = await crossReferenceInstitutionCatalog(
++    supabase,
++    profile.data?.institution_id ?? null,
++    filtered.map((b) => b.title)
++  );
++
++  const withAvailability = filtered.map((book) => ({
++    ...book,
++    institutionAvailability: institutionMatches.get(book.title) ?? null,
++  }));
++
++  return NextResponse.json({ results: withAvailability });
++}
+diff --git a/components/admin/AdminNav.tsx b/components/admin/AdminNav.tsx
+index 72635aa..6934028 100644
+--- a/components/admin/AdminNav.tsx
++++ b/components/admin/AdminNav.tsx
+@@ -9,6 +9,7 @@ const links = [
+   { href: "/admin/featured-books", label: "Featured Books" },
+   { href: "/admin/posts", label: "Posts" },
+   { href: "/admin/competitions", label: "Competitions" },
++  { href: "/admin/institution-catalog", label: "Institution Catalogs" },
+ ];
+ 
+ export function AdminNav() {
+diff --git a/components/admin/InstitutionCatalogClient.tsx b/components/admin/InstitutionCatalogClient.tsx
+new file mode 100644
+index 0000000..41ca56e
+--- /dev/null
++++ b/components/admin/InstitutionCatalogClient.tsx
+@@ -0,0 +1,222 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { Button } from "@/components/ui/Button";
++import { Input } from "@/components/ui/Input";
++
++interface Institution {
++  id: string;
++  name: string;
++  code: string;
++  type: "school" | "company";
++  bookCount: number;
++}
++
++interface ParsedBook {
++  isbn: string;
++  title: string;
++  author: string;
++  available_copies?: number;
++}
++
++/** Minimal CSV line splitter: handles simple double-quoted fields, not full RFC 4180 (no embedded newlines in a field). */
++function parseCsvLine(line: string): string[] {
++  const fields: string[] = [];
++  let current = "";
++  let inQuotes = false;
++  for (let i = 0; i < line.length; i++) {
++    const ch = line[i];
++    if (ch === '"') {
++      inQuotes = !inQuotes;
++    } else if (ch === "," && !inQuotes) {
++      fields.push(current.trim());
++      current = "";
++    } else {
++      current += ch;
++    }
++  }
++  fields.push(current.trim());
++  return fields;
++}
++
++function parseCatalogText(text: string): { books: ParsedBook[]; error: string | null } {
++  const trimmed = text.trim();
++  if (!trimmed) return { books: [], error: "Paste some CSV or JSON first." };
++
++  if (trimmed.startsWith("[")) {
++    try {
++      const parsed = JSON.parse(trimmed);
++      if (!Array.isArray(parsed)) return { books: [], error: "JSON must be an array of books." };
++      return {
++        books: parsed.map((b) => ({
++          isbn: String(b.isbn ?? ""),
++          title: String(b.title ?? ""),
++          author: String(b.author ?? ""),
++          available_copies: Number(b.available_copies ?? 1),
++        })),
++        error: null,
++      };
++    } catch {
++      return { books: [], error: "Couldn't parse that JSON." };
++    }
++  }
++
++  const lines = trimmed.split("\n").filter((l) => l.trim());
++  const looksLikeHeader = /isbn/i.test(lines[0]) && /title/i.test(lines[0]);
++  const dataLines = looksLikeHeader ? lines.slice(1) : lines;
++
++  const books = dataLines.map((line) => {
++    const [isbn, title, author, copies] = parseCsvLine(line);
++    return { isbn: isbn ?? "", title: title ?? "", author: author ?? "", available_copies: copies ? Number(copies) : 1 };
++  });
++
++  return { books, error: null };
++}
++
++export function InstitutionCatalogClient() {
++  const [institutions, setInstitutions] = useState<Institution[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [selectedId, setSelectedId] = useState("");
++  const [error, setError] = useState("");
++  const [message, setMessage] = useState("");
++
++  const [newName, setNewName] = useState("");
++  const [newCode, setNewCode] = useState("");
++  const [newType, setNewType] = useState<"school" | "company">("school");
++  const [creating, setCreating] = useState(false);
++
++  const [catalogText, setCatalogText] = useState("");
++  const [uploading, setUploading] = useState(false);
++
++  useEffect(() => {
++    void load();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, []);
++
++  async function load() {
++    setLoading(true);
++    const res = await fetch("/api/admin/institution-catalog");
++    const data = await res.json().catch(() => ({}));
++    const list: Institution[] = res.ok ? data.institutions ?? [] : [];
++    setInstitutions(list);
++    if (!selectedId && list.length > 0) setSelectedId(list[0].id);
++    setLoading(false);
++  }
++
++  async function createInstitution() {
++    setError("");
++    if (!newName.trim() || !newCode.trim()) {
++      setError("Fill in name and code.");
++      return;
++    }
++    setCreating(true);
++    const res = await fetch("/api/admin/institution-catalog", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({ action: "create_institution", name: newName.trim(), code: newCode.trim(), type: newType }),
++    });
++    const data = await res.json().catch(() => ({}));
++    setCreating(false);
++    if (!res.ok) {
++      setError(data.error ?? "Couldn't create that institution.");
++      return;
++    }
++    setNewName("");
++    setNewCode("");
++    await load();
++  }
++
++  async function uploadCatalog() {
++    setError("");
++    setMessage("");
++    if (!selectedId) {
++      setError("Pick an institution first.");
++      return;
++    }
++    const { books, error: parseError } = parseCatalogText(catalogText);
++    if (parseError) {
++      setError(parseError);
++      return;
++    }
++    setUploading(true);
++    const res = await fetch("/api/admin/institution-catalog", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({ action: "upload_books", institutionId: selectedId, books }),
++    });
++    const data = await res.json().catch(() => ({}));
++    setUploading(false);
++    if (!res.ok) {
++      setError(data.error ?? "Couldn't upload that catalog.");
++      return;
++    }
++    setMessage(`Uploaded ${data.uploaded} books.`);
++    setCatalogText("");
++    await load();
++  }
++
++  return (
++    <div>
++      <h1 className="text-2xl font-bold text-admin-primary">Institution Catalogs</h1>
++      <p className="mt-1 text-admin-muted">Upload a school or company&apos;s library so kids see availability badges.</p>
++
++      <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
++        <h2 className="font-semibold text-admin-primary">New institution</h2>
++        <div className="mt-3 grid gap-3 sm:grid-cols-3">
++          <Input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
++          <Input placeholder="Code (unique)" value={newCode} onChange={(e) => setNewCode(e.target.value)} />
++          <select
++            value={newType}
++            onChange={(e) => setNewType(e.target.value as "school" | "company")}
++            className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-slate-400 focus:ring-2"
++          >
++            <option value="school">School</option>
++            <option value="company">Company</option>
++          </select>
++        </div>
++        <Button variant="secondary" className="mt-3" disabled={creating} onClick={createInstitution}>
++          {creating ? "Creating…" : "Create institution"}
++        </Button>
++      </div>
++
++      <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
++        <h2 className="font-semibold text-admin-primary">Upload catalog</h2>
++        {loading ? (
++          <p className="mt-2 text-sm text-admin-muted">Loading…</p>
++        ) : institutions.length === 0 ? (
++          <p className="mt-2 text-sm text-admin-muted">Create an institution first.</p>
++        ) : (
++          <>
++            <select
++              value={selectedId}
++              onChange={(e) => setSelectedId(e.target.value)}
++              className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-slate-400 focus:ring-2"
++            >
++              {institutions.map((i) => (
++                <option key={i.id} value={i.id}>
++                  {i.name} ({i.bookCount} books)
++                </option>
++              ))}
++            </select>
++            <p className="mt-3 text-sm text-admin-muted">
++              Paste CSV (isbn,title,author,available_copies — header row optional) or a JSON array of{" "}
++              {`{ isbn, title, author, available_copies }`}.
++            </p>
++            <textarea
++              value={catalogText}
++              onChange={(e) => setCatalogText(e.target.value)}
++              rows={10}
++              placeholder={"isbn,title,author,available_copies\n9780000000001,Charlotte's Web,E.B. White,3"}
++              className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-2.5 font-mono text-sm outline-none focus:border-slate-400 focus:ring-2"
++            />
++            {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
++            {message && <p className="mt-2 text-sm text-emerald-600">{message}</p>}
++            <Button variant="secondary" className="mt-3" disabled={uploading} onClick={uploadCatalog}>
++              {uploading ? "Uploading…" : "Upload catalog"}
++            </Button>
++          </>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/components/kids/DiscoverClient.tsx b/components/kids/DiscoverClient.tsx
+index b74b329..0aa607d 100644
+--- a/components/kids/DiscoverClient.tsx
++++ b/components/kids/DiscoverClient.tsx
+@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
+ import { Button } from "@/components/ui/Button";
+ import { Input } from "@/components/ui/Input";
+ import { createClient } from "@/lib/supabase/client";
+-import { searchByAuthor } from "@/lib/open-library";
+ import { getEffectiveBlocksForKid, filterBlockedBooks, type EffectiveBlocks } from "@/lib/content-blocks";
+ 
+ interface Rec {
+@@ -21,10 +20,17 @@ interface FeaturedBook {
+   description: string | null;
+ }
+ 
++interface InstitutionAvailability {
++  institutionName: string;
++  institutionType: "school" | "company";
++  availableCopies: number;
++}
++
+ interface AuthorBook {
+   title: string;
+   author: string;
+   cover_url: string | null;
++  institutionAvailability?: InstitutionAvailability | null;
+ }
+ 
+ function WhereToFind({ title, author }: { title: string; author: string }) {
+@@ -46,7 +52,7 @@ function BookCard({
+   added,
+   onAdd,
+ }: {
+-  book: { title: string; author: string; description?: string | null };
++  book: { title: string; author: string; description?: string | null; institutionAvailability?: InstitutionAvailability | null };
+   added: boolean;
+   onAdd: () => void;
+ }) {
+@@ -55,6 +61,12 @@ function BookCard({
+       <p className="font-bold">{book.title}</p>
+       <p className="text-sm text-slate-500">{book.author}</p>
+       {book.description && <p className="mt-2 text-sm text-slate-600 line-clamp-2">{book.description}</p>}
++      {book.institutionAvailability && (
++        <p className="mt-2 text-xs font-semibold text-emerald-700">
++          {book.institutionAvailability.institutionType === "school" ? "🏫" : "🏢"} Available in{" "}
++          {book.institutionAvailability.institutionName}
++        </p>
++      )}
+       <WhereToFind title={book.title} author={book.author} />
+       <Button variant="secondary" className="mt-3 !text-xs" onClick={onAdd} disabled={added}>
+         {added ? "Added ✓" : "+ Want to read"}
+@@ -175,7 +187,9 @@ export function DiscoverClient() {
+       return;
+     }
+     setSearchingAuthor(true);
+-    const results = await searchByAuthor(authorQuery.trim());
++    const res = await fetch(`/api/books/search?type=author&q=${encodeURIComponent(authorQuery.trim())}`);
++    const data = await res.json().catch(() => ({}));
++    const results = res.ok ? data.results ?? [] : [];
+     setAuthorResults(filterBlockedBooks(blocks, results));
+     setSearchingAuthor(false);
+   }
+diff --git a/lib/institution-catalog.ts b/lib/institution-catalog.ts
+new file mode 100644
+index 0000000..c06e1e9
+--- /dev/null
++++ b/lib/institution-catalog.ts
+@@ -0,0 +1,55 @@
++import type { SupabaseClient } from "@supabase/supabase-js";
++
++export interface InstitutionMatch {
++  institutionName: string;
++  institutionType: "school" | "company";
++  availableCopies: number;
++}
++
++/**
++ * Matches by normalized title only, not ISBN — Open Library search
++ * results (lib/open-library.ts) return title/author/cover/description
++ * but no ISBN, so an ISBN-based lookup isn't possible with the data
++ * actually available at search time. Good enough for a "likely available
++ * at your school/company" badge without an ISBN reconciliation step.
++ *
++ * Fetches the institution's whole catalog rather than filtering
++ * server-side by each title, since institution_books.title casing isn't
++ * guaranteed to match Open Library's — institution catalogs are expected
++ * to be one school/company's holdings (hundreds, not millions), so this
++ * stays cheap.
++ */
++export async function crossReferenceInstitutionCatalog(
++  supabase: SupabaseClient,
++  institutionId: string | null,
++  titles: string[]
++): Promise<Map<string, InstitutionMatch>> {
++  const result = new Map<string, InstitutionMatch>();
++  if (!institutionId || titles.length === 0) return result;
++
++  const { data: institution } = await supabase
++    .from("institutions")
++    .select("name, type")
++    .eq("id", institutionId)
++    .maybeSingle();
++  if (!institution) return result;
++
++  const { data: catalog } = await supabase
++    .from("institution_books")
++    .select("title, available_copies")
++    .eq("institution_id", institutionId);
++
++  const byNormalizedTitle = new Map<string, number>();
++  for (const row of catalog ?? []) {
++    byNormalizedTitle.set(row.title.trim().toLowerCase(), row.available_copies);
++  }
++
++  for (const title of titles) {
++    const copies = byNormalizedTitle.get(title.trim().toLowerCase());
++    if (copies !== undefined) {
++      result.set(title, { institutionName: institution.name, institutionType: institution.type, availableCopies: copies });
++    }
++  }
++
++  return result;
++}
+diff --git a/supabase/migrations/026_institution_catalogs.sql b/supabase/migrations/026_institution_catalogs.sql
+new file mode 100644
+index 0000000..29d468e
+--- /dev/null
++++ b/supabase/migrations/026_institution_catalogs.sql
+@@ -0,0 +1,44 @@
++-- Phase O: institutional book catalogs — a school or company can upload
++-- their own library's holdings so kids see "available at your school"
++-- badges when searching/discovering.
++
++create table if not exists public.institutions (
++  id uuid primary key default gen_random_uuid(),
++  name text not null,
++  code text not null unique,
++  type text not null check (type in ('school', 'company')),
++  created_at timestamptz not null default now()
++);
++
++create table if not exists public.institution_books (
++  institution_id uuid not null references public.institutions(id) on delete cascade,
++  isbn text not null,
++  title text not null,
++  author text not null,
++  available_copies int not null default 1,
++  primary key (institution_id, isbn)
++);
++
++alter table public.users add column if not exists institution_id uuid references public.institutions(id) on delete set null;
++alter table public.classrooms add column if not exists institution_id uuid references public.institutions(id) on delete set null;
++
++create index if not exists institution_books_title_idx on public.institution_books (lower(title));
++
++alter table public.institutions enable row level security;
++alter table public.institution_books enable row level security;
++
++drop policy if exists "institutions_select" on public.institutions;
++create policy "institutions_select" on public.institutions for select to authenticated using (true);
++
++drop policy if exists "institutions_admin_manage" on public.institutions;
++create policy "institutions_admin_manage" on public.institutions for all
++  using (public.is_admin())
++  with check (public.is_admin());
++
++drop policy if exists "institution_books_select" on public.institution_books;
++create policy "institution_books_select" on public.institution_books for select to authenticated using (true);
++
++drop policy if exists "institution_books_admin_manage" on public.institution_books;
++create policy "institution_books_admin_manage" on public.institution_books for all
++  using (public.is_admin())
++  with check (public.is_admin());

@@ -1,0 +1,1203 @@
+From 89f042da8752fd671897e5b55089cc53ada8cd35 Mon Sep 17 00:00:00 2001
+From: Vrisan <vrisanshah@gmail.com>
+Date: Thu, 6 Aug 2026 22:14:58 +0000
+Subject: [PATCH] phase-T-kids-fixes-and-parent-overhaul
+
+Four separate asks, addressed in order.
+
+1. 'Offline mode where is it' -- it was never actually missing. The
+   infra was all there since the PWA phase (public/sw.js,
+   lib/offline-queue.ts, <OfflineBanner />) but had zero discoverable
+   entry point: the banner only renders while something is actively
+   queued/syncing, so there was no way to learn the feature exists
+   ahead of time, or to install the app. Added
+   components/kids/OfflineReadingInfoCard.tsx to Kids Settings:
+   explains what it does, shows live online/offline status, and
+   surfaces the real browser install prompt (beforeinstallprompt) when
+   supported.
+
+2. Shop purchases (pets, avatar accessories, shelf themes) not
+   appearing anywhere -- found the actual bug. Equipping writes to
+   users.equipped_pet_id / equipped_avatar_accessory_id /
+   equipped_shelf_theme_id (app/api/kids/shop/equip/route.ts), but
+   grep confirmed literally nothing outside the shop page itself ever
+   read those three columns back -- not the home page, not the shelf,
+   nowhere. (Badges/titles are a completely separate system that
+   already worked correctly -- this bug was specific to shop
+   cosmetics.) New lib/equipped-cosmetics.ts resolves all three ids
+   into their shop_items rows in one place; EquippedSlots now renders
+   the pet + accessory right on the avatar on the home page, and the
+   Shelf page shows a themed banner (color by rarity) when a shelf
+   theme is equipped.
+
+3. Nav had 17 links total -- 5 primary + 12 stuffed into a 'More'
+   dropdown, and ALL 17 crammed into one horizontally-scrolling row on
+   mobile. Trimmed to 6: Home/Shelf/Discover stay primary; Messages/
+   Profile/Settings are the only things left in More (account-y
+   utility links, not features). Every other link -- Challenges,
+   Leaderboard, Reading Game, BookTok, Book Club, Pip, Shop, Trades,
+   Buddy Reading, Writing, Cards, Events -- moved onto the home
+   dashboard as three organized tile sections (Explore & Play,
+   Friends & Sharing, Shop & Trade) instead of disappearing. Nothing
+   lost, just relocated to where a dashboard tile fits better than a
+   nav item.
+
+4. Parent dashboard overhaul, per the ask: nicer overview cards (now
+   show current book + progress, clickable through to a new detail
+   page), a family-wide summary strip (total minutes/books/streak
+   across all kids), and a genuinely new per-child page
+   (/parent/child/[id]) with tabs: Overview (7-day activity chart,
+   badges, writing competition submissions), Books (currently
+   reading/finished with covers), Reading Time (day-by-day bars),
+   Events (weekend event placements with rank), and Discover (their
+   want-to-read queue).
+
+   Found a real gap while building this: event_entries and
+   user_badges only ever had a 'select own' RLS policy (auth.uid() =
+   user_id) -- a parent querying either for their kid got zero rows
+   back, silently, not an error. New migration
+   028_parent_dashboard_overhaul.sql adds is_parent_of()-based
+   parent-read policies for both, matching the existing pattern
+   already used for reading_sessions/user_books/user_challenges.
+   Without this migration the new Events tab and badge list on the
+   detail page render empty even though the code is correct.
+
+Branched on top of phase-Q (not main) since phase-Q already touched
+app/parent/dashboard/page.tsx (added the AdSense placement) -- this
+avoids a patch conflict on that file. Apply phase-Q before this one;
+order relative to phase-R/phase-S doesn't matter, neither touches any
+file this patch does.
+---
+ app/kids/home/page.tsx                        |  55 +++-
+ app/kids/settings/page.tsx                    |   4 +-
+ app/kids/shelf/page.tsx                       |  27 +-
+ app/parent/child/[id]/page.tsx                | 180 ++++++++++++
+ app/parent/dashboard/page.tsx                 | 139 ++++++---
+ components/kids/EquippedSlots.tsx             |  34 ++-
+ components/kids/KidsNav.tsx                   |  18 +-
+ components/kids/OfflineReadingInfoCard.tsx    |  88 ++++++
+ components/parent/ChildDetailTabs.tsx         | 274 ++++++++++++++++++
+ lib/equipped-cosmetics.ts                     |  56 ++++
+ .../028_parent_dashboard_overhaul.sql         |  14 +
+ 11 files changed, 830 insertions(+), 59 deletions(-)
+ create mode 100644 app/parent/child/[id]/page.tsx
+ create mode 100644 components/kids/OfflineReadingInfoCard.tsx
+ create mode 100644 components/parent/ChildDetailTabs.tsx
+ create mode 100644 lib/equipped-cosmetics.ts
+ create mode 100644 supabase/migrations/028_parent_dashboard_overhaul.sql
+
+diff --git a/app/kids/home/page.tsx b/app/kids/home/page.tsx
+index 69a22f0..377f5ac 100644
+--- a/app/kids/home/page.tsx
++++ b/app/kids/home/page.tsx
+@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
+ import { getProfile, createClient } from "@/lib/supabase/server";
+ import { getLevel, xpProgressInLevel } from "@/lib/xp";
+ import { calculateStreak } from "@/lib/reading-stats";
++import { getEquippedCosmetics } from "@/lib/equipped-cosmetics";
+ import { Button } from "@/components/ui/Button";
+ import { JoinClassroomCard } from "@/components/kids/JoinClassroomCard";
+ import { ParentLinkCodeCard } from "@/components/kids/ParentLinkCodeCard";
+@@ -49,6 +50,7 @@ export default async function KidsHomePage() {
+   const equippedBadge = ownedBadges.find((b) => b.id === profile?.equipped_badge_id) ?? null;
+   const equippedTitle = ownedTitles.find((t) => t.id === profile?.equipped_title_id) ?? null;
+   const activeTheme = (profile?.active_theme_config as ThemeConfig | null) ?? null;
++  const cosmetics = await getEquippedCosmetics(supabase, profile);
+ 
+   const { data: currentBook } = await supabase
+     .from("user_books")
+@@ -74,17 +76,28 @@ export default async function KidsHomePage() {
+     .eq("completed", false)
+     .limit(3);
+ 
+-  const quickLinks = [
+-    { href: "/kids/shelf", label: "My Shelf", emoji: "📚" },
++  const exploreLinks = [
+     { href: "/kids/discover", label: "Discover", emoji: "🔎" },
++    { href: "/kids/events", label: "Events", emoji: "🏅" },
++    { href: "/kids/collection", label: "Cards", emoji: "🃏" },
+     { href: "/kids/challenges", label: "Challenges", emoji: "🏆" },
+     { href: "/kids/leaderboard", label: "Leaderboard", emoji: "🥇" },
+     { href: "/kids/reading-game", label: "Reading Game", emoji: "🎮" },
++  ];
++
++  const socialLinks = [
+     { href: "/kids/book-club", label: "Book Club", emoji: "👥" },
+     { href: "/kids/booktok", label: "BookTok", emoji: "🎬" },
++    { href: "/kids/buddy", label: "Buddy Reading", emoji: "🤝" },
++    { href: "/kids/competitions", label: "Writing", emoji: "✍️" },
+     { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
+   ];
+ 
++  const shopLinks = [
++    { href: "/kids/shop", label: "Shop", emoji: "🛍️" },
++    { href: "/kids/trades", label: "Trades", emoji: "🔄" },
++  ];
++
+   const bookData = Array.isArray(currentBook?.book)
+     ? currentBook.book[0]
+     : currentBook?.book;
+@@ -112,6 +125,8 @@ export default async function KidsHomePage() {
+             ownedTitles={ownedTitles}
+             equippedBadge={equippedBadge}
+             equippedTitle={equippedTitle}
++            equippedAccessory={cosmetics.accessory}
++            equippedPet={cosmetics.pet}
+           />
+         </div>
+         <div className="mt-6 flex flex-wrap gap-6">
+@@ -231,9 +246,41 @@ export default async function KidsHomePage() {
+       {!hasParentLinked && <ParentLinkCodeCard />}
+ 
+       <section className="mt-8">
+-        <h2 className="font-kids-display text-xl font-bold text-slate-900">Quick links</h2>
++        <h2 className="font-kids-display text-xl font-bold text-slate-900">Explore & play</h2>
++        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
++          {exploreLinks.map((l) => (
++            <Link
++              key={l.href}
++              href={l.href}
++              className="rounded-2xl bg-white p-4 shadow-md transition hover:shadow-lg"
++            >
++              <span className="text-2xl">{l.emoji}</span>
++              <p className="mt-2 font-semibold text-slate-800">{l.label}</p>
++            </Link>
++          ))}
++        </div>
++      </section>
++
++      <section className="mt-8">
++        <h2 className="font-kids-display text-xl font-bold text-slate-900">Friends & sharing</h2>
++        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
++          {socialLinks.map((l) => (
++            <Link
++              key={l.href}
++              href={l.href}
++              className="rounded-2xl bg-white p-4 shadow-md transition hover:shadow-lg"
++            >
++              <span className="text-2xl">{l.emoji}</span>
++              <p className="mt-2 font-semibold text-slate-800">{l.label}</p>
++            </Link>
++          ))}
++        </div>
++      </section>
++
++      <section className="mt-8">
++        <h2 className="font-kids-display text-xl font-bold text-slate-900">Shop & trade</h2>
+         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+-          {quickLinks.map((l) => (
++          {shopLinks.map((l) => (
+             <Link
+               key={l.href}
+               href={l.href}
+diff --git a/app/kids/settings/page.tsx b/app/kids/settings/page.tsx
+index a81cf00..0554d41 100644
+--- a/app/kids/settings/page.tsx
++++ b/app/kids/settings/page.tsx
+@@ -1,6 +1,7 @@
+ import { redirect } from "next/navigation";
+ import { getProfile } from "@/lib/supabase/server";
+ import { AccessibilitySettingsForm } from "@/components/kids/AccessibilitySettingsForm";
++import { OfflineReadingInfoCard } from "@/components/kids/OfflineReadingInfoCard";
+ 
+ export default async function KidsSettingsPage() {
+   const { user } = await getProfile();
+@@ -9,7 +10,8 @@ export default async function KidsSettingsPage() {
+   return (
+     <div>
+       <h1 className="font-kids-display text-2xl font-bold text-slate-900">Settings</h1>
+-      <div className="mt-4">
++      <div className="mt-4 space-y-4">
++        <OfflineReadingInfoCard />
+         <AccessibilitySettingsForm />
+       </div>
+     </div>
+diff --git a/app/kids/shelf/page.tsx b/app/kids/shelf/page.tsx
+index 70946e8..8e9826f 100644
+--- a/app/kids/shelf/page.tsx
++++ b/app/kids/shelf/page.tsx
+@@ -1,14 +1,37 @@
+-import { getProfile } from "@/lib/supabase/server";
++import { getProfile, createClient } from "@/lib/supabase/server";
+ import { redirect } from "next/navigation";
+ import { ShelfClient } from "@/components/kids/ShelfClient";
+ import { JoinClassroomCard } from "@/components/kids/JoinClassroomCard";
++import { getEquippedCosmetics } from "@/lib/equipped-cosmetics";
++
++const RARITY_BANNER_CLASS: Record<string, string> = {
++  common: "from-emerald-400 to-teal-400",
++  rare: "from-sky-400 to-indigo-400",
++  epic: "from-fuchsia-400 to-purple-500",
++  legendary: "from-amber-400 to-orange-500",
++};
+ 
+ export default async function KidsShelfPage() {
+-  const { user } = await getProfile();
++  const { user, profile } = await getProfile();
+   if (!user) redirect("/auth/login");
+ 
++  const supabase = await createClient();
++  const cosmetics = await getEquippedCosmetics(supabase, profile);
++
+   return (
+     <>
++      {cosmetics.shelfTheme && (
++        <div
++          className={`mb-4 flex items-center gap-2 rounded-2xl bg-gradient-to-r ${
++            RARITY_BANNER_CLASS[cosmetics.shelfTheme.rarity] ?? RARITY_BANNER_CLASS.common
++          } px-4 py-2 text-sm font-semibold text-white shadow-md`}
++        >
++          <span aria-hidden="true" className="text-lg">
++            {cosmetics.shelfTheme.icon_or_asset}
++          </span>
++          <span>{cosmetics.shelfTheme.name} shelf equipped</span>
++        </div>
++      )}
+       <ShelfClient userId={user.id} />
+       <JoinClassroomCard />
+     </>
+diff --git a/app/parent/child/[id]/page.tsx b/app/parent/child/[id]/page.tsx
+new file mode 100644
+index 0000000..4d81e69
+--- /dev/null
++++ b/app/parent/child/[id]/page.tsx
+@@ -0,0 +1,180 @@
++import { redirect, notFound } from "next/navigation";
++import Link from "next/link";
++import { getProfile, createClient } from "@/lib/supabase/server";
++import { calculateStreak, sumMinutesInRange } from "@/lib/reading-stats";
++import { getLevel, xpProgressInLevel } from "@/lib/xp";
++import { ChildDetailTabs } from "@/components/parent/ChildDetailTabs";
++
++export default async function ParentChildDetailPage({
++  params,
++}: {
++  params: Promise<{ id: string }>;
++}) {
++  const { id: childId } = await params;
++  const { profile } = await getProfile();
++  if (!profile) redirect("/auth/login");
++
++  const supabase = await createClient();
++
++  // RLS (public.is_parent_of) is what actually enforces this parent can
++  // only ever see their own linked children -- this check is just for a
++  // fast, friendly 404 instead of a page full of empty sections when
++  // someone edits the URL to a child that isn't theirs.
++  const { data: link } = await supabase
++    .from("parent_child")
++    .select("child_id")
++    .eq("parent_id", profile.id)
++    .eq("child_id", childId)
++    .maybeSingle();
++  if (!link) notFound();
++
++  const { data: child } = await supabase
++    .from("users")
++    .select("id, display_name, xp, avatar_url, age")
++    .eq("id", childId)
++    .single();
++  if (!child) notFound();
++
++  const yearAgo = new Date();
++  yearAgo.setDate(yearAgo.getDate() - 370);
++  const weekStart = new Date();
++  weekStart.setDate(weekStart.getDate() - 7);
++  const monthStart = new Date();
++  monthStart.setDate(1);
++
++  const [
++    { data: sessions },
++    { data: currentlyReading },
++    { data: finishedBooks },
++    { data: wantToRead },
++    { data: eventEntries },
++    { data: badgeRows },
++    { data: submissions },
++  ] = await Promise.all([
++    supabase
++      .from("reading_sessions")
++      .select("date, minutes_read")
++      .eq("user_id", childId)
++      .gte("date", yearAgo.toISOString().split("T")[0]),
++    supabase
++      .from("user_books")
++      .select("progress_percent, started_at, book:books(id, title, author, cover_url, genre)")
++      .eq("user_id", childId)
++      .eq("status", "reading")
++      .order("started_at", { ascending: false }),
++    supabase
++      .from("user_books")
++      .select("finished_at, book:books(id, title, author, cover_url, genre)")
++      .eq("user_id", childId)
++      .eq("status", "finished")
++      .order("finished_at", { ascending: false })
++      .limit(30),
++    supabase
++      .from("user_books")
++      .select("book:books(id, title, author, cover_url, genre)")
++      .eq("user_id", childId)
++      .eq("status", "want_to_read")
++      .limit(20),
++    supabase
++      .from("event_entries")
++      .select("progress, rank, event:weekend_events(id, title, status, starts_at, ends_at)")
++      .eq("user_id", childId)
++      .limit(12),
++    supabase
++      .from("user_badges")
++      .select("earned_at, badge:badges(id, name, icon, description)")
++      .eq("user_id", childId)
++      .order("earned_at", { ascending: false }),
++    supabase
++      .from("writing_submissions")
++      .select("id, title, community_votes, is_winner, created_at, competition:writing_competitions(title)")
++      .eq("author_id", childId)
++      .order("created_at", { ascending: false })
++      .limit(10),
++  ]);
++
++  const rows = sessions ?? [];
++  const streak = calculateStreak(rows);
++  const minutesWeek = sumMinutesInRange(rows, weekStart, new Date());
++  const minutesMonth = sumMinutesInRange(rows, monthStart, new Date());
++  const { level, title: levelTitle } = getLevel(child.xp ?? 0);
++  const progress = xpProgressInLevel(child.xp ?? 0);
++
++  // Last 7 days, oldest to newest, for the little activity bars.
++  const last7Days = Array.from({ length: 7 }, (_, i) => {
++    const d = new Date();
++    d.setDate(d.getDate() - (6 - i));
++    const key = d.toISOString().split("T")[0];
++    const minutes = rows.filter((s) => s.date.split("T")[0] === key).reduce((a, s) => a + (s.minutes_read ?? 0), 0);
++    return { label: d.toLocaleDateString(undefined, { weekday: "short" }), minutes };
++  });
++
++  const unwrap = <T,>(v: T | T[] | null): T | null => (Array.isArray(v) ? v[0] ?? null : v);
++
++  const sortedEventEntries = (eventEntries ?? [])
++    .map((r) => ({ progress: r.progress, rank: r.rank, event: unwrap(r.event) }))
++    .sort((a, b) => {
++      if (!a.event || !b.event) return 0;
++      return new Date(b.event.starts_at).getTime() - new Date(a.event.starts_at).getTime();
++    });
++
++  return (
++    <div>
++      <Link href="/parent/dashboard" className="text-sm font-semibold text-parent-primary hover:underline">
++        ← All children
++      </Link>
++
++      <div className="mt-3 flex flex-wrap items-center gap-4 rounded-2xl bg-white p-6 shadow-sm">
++        <span className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 text-4xl">
++          {child.avatar_url ?? "📖"}
++        </span>
++        <div className="flex-1">
++          <h1 className="text-2xl font-bold text-slate-900">{child.display_name}</h1>
++          <p className="text-sm text-parent-muted">
++            Age {child.age ?? "—"} · Level {level} ({levelTitle}) · {child.xp ?? 0} XP
++          </p>
++          <div className="mt-2 h-2 w-48 overflow-hidden rounded-full bg-slate-100">
++            <div className="h-full rounded-full bg-parent-primary" style={{ width: `${progress}%` }} />
++          </div>
++        </div>
++        <div className="grid grid-cols-3 gap-3 text-center text-sm">
++          <div className="rounded-xl bg-slate-50 px-4 py-2">
++            <p className="font-bold text-slate-900">🔥 {streak}</p>
++            <p className="text-parent-muted">Day streak</p>
++          </div>
++          <div className="rounded-xl bg-slate-50 px-4 py-2">
++            <p className="font-bold text-slate-900">{minutesWeek}</p>
++            <p className="text-parent-muted">Min this week</p>
++          </div>
++          <div className="rounded-xl bg-slate-50 px-4 py-2">
++            <p className="font-bold text-slate-900">{minutesMonth}</p>
++            <p className="text-parent-muted">Min this month</p>
++          </div>
++        </div>
++      </div>
++
++      <ChildDetailTabs
++        last7Days={last7Days}
++        currentlyReading={(currentlyReading ?? []).map((r) => ({
++          progressPercent: r.progress_percent,
++          book: unwrap(r.book),
++        }))}
++        finishedBooks={(finishedBooks ?? []).map((r) => ({
++          finishedAt: r.finished_at,
++          book: unwrap(r.book),
++        }))}
++        wantToRead={(wantToRead ?? []).map((r) => ({ book: unwrap(r.book) }))}
++        eventEntries={sortedEventEntries}
++        badges={(badgeRows ?? []).map((r) => ({ earnedAt: r.earned_at, badge: unwrap(r.badge) }))}
++        submissions={(submissions ?? []).map((r) => ({
++          id: r.id,
++          title: r.title,
++          votes: r.community_votes,
++          isWinner: r.is_winner,
++          createdAt: r.created_at,
++          competitionTitle: unwrap(r.competition)?.title ?? null,
++        }))}
++      />
++    </div>
++  );
++}
+diff --git a/app/parent/dashboard/page.tsx b/app/parent/dashboard/page.tsx
+index a005cab..df9f9fe 100644
+--- a/app/parent/dashboard/page.tsx
++++ b/app/parent/dashboard/page.tsx
+@@ -1,7 +1,9 @@
+ import { redirect } from "next/navigation";
+ import { getProfile, createClient } from "@/lib/supabase/server";
+ import { calculateStreak, sumMinutesInRange } from "@/lib/reading-stats";
++import { getLevel } from "@/lib/xp";
+ import Link from "next/link";
++import Image from "next/image";
+ import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
+ 
+ export default async function ParentDashboardPage() {
+@@ -33,13 +35,21 @@ export default async function ParentDashboardPage() {
+       const historyStart = new Date();
+       historyStart.setDate(historyStart.getDate() - 370);
+ 
+-      const [{ data: sessions }, { count: booksMonth }, { data: activeChallenges }] =
++      const [{ data: sessions }, { data: currentBook }, { count: booksMonth }, { data: activeChallenges }] =
+         await Promise.all([
+           supabase
+             .from("reading_sessions")
+             .select("date, minutes_read")
+             .eq("user_id", child.id)
+             .gte("date", historyStart.toISOString().split("T")[0]),
++          supabase
++            .from("user_books")
++            .select("progress_percent, book:books(title, cover_url)")
++            .eq("user_id", child.id)
++            .eq("status", "reading")
++            .order("started_at", { ascending: false })
++            .limit(1)
++            .maybeSingle(),
+           supabase
+             .from("user_books")
+             .select("*", { count: "exact", head: true })
+@@ -53,27 +63,49 @@ export default async function ParentDashboardPage() {
+             .eq("completed", false),
+         ]);
+ 
++      const bookData = Array.isArray(currentBook?.book) ? currentBook.book[0] : currentBook?.book;
++
+       return {
+         child,
+         streak: calculateStreak(sessions ?? []),
+         minutesWeek: sumMinutesInRange(sessions ?? [], weekStart, new Date()),
+         booksMonth: booksMonth ?? 0,
+         activeChallenges: activeChallenges?.length ?? 0,
++        currentBook: (bookData ?? null) as { title: string; cover_url: string | null } | null,
++        currentBookProgress: currentBook?.progress_percent ?? 0,
++        level: getLevel(child.xp ?? 0),
+       };
+     })
+   );
+ 
++  const familyMinutesWeek = childStats.reduce((a, s) => a + s.minutesWeek, 0);
++  const familyBooksMonth = childStats.reduce((a, s) => a + s.booksMonth, 0);
++  const longestStreak = childStats.reduce((a, s) => Math.max(a, s.streak), 0);
++
+   return (
+     <div>
+       <GoogleAdsense />
+-      <h1 className="text-2xl font-bold text-slate-900">
+-        Welcome, {profile.display_name}
+-      </h1>
+-      <p className="mt-1 text-parent-muted">
+-        Track your children&apos;s reading progress.
+-      </p>
++      <h1 className="text-2xl font-bold text-slate-900">Welcome, {profile.display_name}</h1>
++      <p className="mt-1 text-parent-muted">Track your children&apos;s reading progress.</p>
++
++      {childStats.length > 0 && (
++        <div className="mt-6 grid grid-cols-3 gap-3 rounded-2xl bg-white p-5 shadow-sm sm:gap-6">
++          <div className="text-center">
++            <p className="text-2xl font-bold text-parent-primary">{familyMinutesWeek}</p>
++            <p className="text-sm text-parent-muted">Family minutes this week</p>
++          </div>
++          <div className="text-center">
++            <p className="text-2xl font-bold text-parent-primary">{familyBooksMonth}</p>
++            <p className="text-sm text-parent-muted">Books finished this month</p>
++          </div>
++          <div className="text-center">
++            <p className="text-2xl font-bold text-parent-primary">🔥 {longestStreak}</p>
++            <p className="text-sm text-parent-muted">Longest active streak</p>
++          </div>
++        </div>
++      )}
+ 
+-      <div className="mt-8 grid gap-4 md:grid-cols-2">
++      <div className="mt-6 grid gap-4 md:grid-cols-2">
+         {childStats.length === 0 ? (
+           <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-slate-500">
+             No child profiles yet.{" "}
+@@ -82,39 +114,70 @@ export default async function ParentDashboardPage() {
+             </Link>
+           </div>
+         ) : (
+-          childStats.map(({ child, streak, minutesWeek, booksMonth, activeChallenges }) => (
+-            <div key={child.id} className="rounded-xl bg-white p-6 shadow-sm">
+-              <div className="flex items-center gap-3">
+-                <span className="text-3xl">{child.avatar_url ?? "📖"}</span>
+-                <div>
+-                  <h2 className="font-semibold text-slate-900">{child.display_name}</h2>
+-                  <p className="text-sm text-slate-500">
+-                    Age {child.age ?? "—"} · {child.xp ?? 0} XP
+-                  </p>
+-                </div>
+-              </div>
+-              <div className="mt-4 grid grid-cols-2 gap-2 text-center text-sm sm:grid-cols-4">
+-                <div className="rounded-lg bg-slate-50 p-2">
+-                  <p className="font-bold text-slate-900">🔥 {streak}</p>
+-                  <p className="text-slate-500">Streak</p>
+-                </div>
+-                <div className="rounded-lg bg-slate-50 p-2">
+-                  <p className="font-bold text-slate-900">{booksMonth}</p>
+-                  <p className="text-slate-500">Books/mo</p>
++          childStats.map(
++            ({ child, streak, minutesWeek, booksMonth, activeChallenges, currentBook, currentBookProgress, level }) => (
++              <Link
++                key={child.id}
++                href={`/parent/child/${child.id}`}
++                className="block rounded-2xl bg-white p-6 shadow-sm transition hover:shadow-md"
++              >
++                <div className="flex items-center gap-3">
++                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-50 text-2xl">
++                    {child.avatar_url ?? "📖"}
++                  </span>
++                  <div className="min-w-0 flex-1">
++                    <h2 className="font-semibold text-slate-900">{child.display_name}</h2>
++                    <p className="text-sm text-slate-500">
++                      Age {child.age ?? "—"} · Level {level.level} · {child.xp ?? 0} XP
++                    </p>
++                  </div>
++                  <span className="shrink-0 text-sm font-semibold text-parent-primary">View →</span>
+                 </div>
+-                <div className="rounded-lg bg-slate-50 p-2">
+-                  <p className="font-bold text-slate-900">{minutesWeek}</p>
+-                  <p className="text-slate-500">Min/week</p>
+-                </div>
+-                <div className="rounded-lg bg-slate-50 p-2">
+-                  <p className="font-bold text-slate-900">{activeChallenges}</p>
+-                  <p className="text-slate-500">Challenges</p>
++
++                {currentBook && (
++                  <div className="mt-4 flex items-center gap-3 rounded-xl bg-slate-50 p-3">
++                    {currentBook.cover_url ? (
++                      <div className="relative h-12 w-9 shrink-0 overflow-hidden rounded">
++                        <Image src={currentBook.cover_url} alt="" fill className="object-cover" unoptimized />
++                      </div>
++                    ) : (
++                      <span className="text-xl">📕</span>
++                    )}
++                    <div className="min-w-0 flex-1">
++                      <p className="truncate text-sm font-semibold text-slate-800">{currentBook.title}</p>
++                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
++                        <div
++                          className="h-full rounded-full bg-parent-primary"
++                          style={{ width: `${currentBookProgress}%` }}
++                        />
++                      </div>
++                    </div>
++                  </div>
++                )}
++
++                <div className="mt-4 grid grid-cols-2 gap-2 text-center text-sm sm:grid-cols-4">
++                  <div className="rounded-lg bg-slate-50 p-2">
++                    <p className="font-bold text-slate-900">🔥 {streak}</p>
++                    <p className="text-slate-500">Streak</p>
++                  </div>
++                  <div className="rounded-lg bg-slate-50 p-2">
++                    <p className="font-bold text-slate-900">{booksMonth}</p>
++                    <p className="text-slate-500">Books/mo</p>
++                  </div>
++                  <div className="rounded-lg bg-slate-50 p-2">
++                    <p className="font-bold text-slate-900">{minutesWeek}</p>
++                    <p className="text-slate-500">Min/week</p>
++                  </div>
++                  <div className="rounded-lg bg-slate-50 p-2">
++                    <p className="font-bold text-slate-900">{activeChallenges}</p>
++                    <p className="text-slate-500">Challenges</p>
++                  </div>
+                 </div>
+-              </div>
+-            </div>
+-          ))
++              </Link>
++            )
++          )
+         )}
+       </div>
+     </div>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/components/kids/EquippedSlots.tsx b/components/kids/EquippedSlots.tsx
+index 850e0d7..314ad44 100644
+--- a/components/kids/EquippedSlots.tsx
++++ b/components/kids/EquippedSlots.tsx
+@@ -1,6 +1,7 @@
+ "use client";
+ 
+ import { useState } from "react";
++import Link from "next/link";
+ import { useRouter } from "next/navigation";
+ 
+ interface OwnedBadge {
+@@ -12,6 +13,11 @@ interface OwnedTitle {
+   id: string;
+   name: string;
+ }
++interface EquippedCosmeticItem {
++  id: string;
++  name: string;
++  icon_or_asset: string;
++}
+ 
+ export function EquippedSlots({
+   avatarUrl,
+@@ -19,12 +25,16 @@ export function EquippedSlots({
+   ownedTitles,
+   equippedBadge,
+   equippedTitle,
++  equippedAccessory,
++  equippedPet,
+ }: {
+   avatarUrl: string | null;
+   ownedBadges: OwnedBadge[];
+   ownedTitles: OwnedTitle[];
+   equippedBadge: OwnedBadge | null;
+   equippedTitle: OwnedTitle | null;
++  equippedAccessory?: EquippedCosmeticItem | null;
++  equippedPet?: EquippedCosmeticItem | null;
+ }) {
+   const router = useRouter();
+   const [open, setOpen] = useState<"badge" | "title" | null>(null);
+@@ -45,8 +55,28 @@ export function EquippedSlots({
+   return (
+     <>
+       <div className="flex items-center gap-3">
+-        <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-white/20 text-3xl">
+-          {avatarUrl ?? "📖"}
++        <div className="relative">
++          <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-white/20 text-3xl">
++            {avatarUrl ?? "📖"}
++          </div>
++          {equippedAccessory && (
++            <span
++              className="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full bg-white text-base shadow"
++              title={equippedAccessory.name}
++              aria-hidden="true"
++            >
++              {equippedAccessory.icon_or_asset}
++            </span>
++          )}
++          {equippedPet && (
++            <Link
++              href="/kids/shop"
++              className="absolute -bottom-1 -left-1 flex h-7 w-7 items-center justify-center rounded-full bg-white text-base shadow"
++              title={`Your buddy: ${equippedPet.name}`}
++            >
++              {equippedPet.icon_or_asset}
++            </Link>
++          )}
+         </div>
+         <div className="flex flex-col gap-1">
+           <button
+diff --git a/components/kids/KidsNav.tsx b/components/kids/KidsNav.tsx
+index 2c1bece..1ce43c9 100644
+--- a/components/kids/KidsNav.tsx
++++ b/components/kids/KidsNav.tsx
+@@ -11,21 +11,15 @@ const primaryLinks = [
+   { href: "/kids/home", label: "Home", emoji: "🏠" },
+   { href: "/kids/shelf", label: "Shelf", emoji: "📚" },
+   { href: "/kids/discover", label: "Discover", emoji: "🔎" },
+-  { href: "/kids/events", label: "Events", emoji: "🏅" },
+-  { href: "/kids/collection", label: "Cards", emoji: "🃏" },
+ ];
+ 
++// Only account-y utility links live in the nav's "More" menu now — every
++// feature/game/social link moved onto the home dashboard as tiles
++// (app/kids/home/page.tsx) instead, since 17 links crammed into one
++// toolbar (5 primary + 12 in a dropdown, ALL 17 on mobile) was the
++// actual complaint. Nothing was removed, just relocated to where a
++// dashboard tile fits better than a nav item.
+ const moreLinks = [
+-  { href: "/kids/challenges", label: "Challenges", emoji: "🏆" },
+-  { href: "/kids/leaderboard", label: "Leaderboard", emoji: "🥇" },
+-  { href: "/kids/reading-game", label: "Game", emoji: "🎮" },
+-  { href: "/kids/booktok", label: "BookTok", emoji: "🎬" },
+-  { href: "/kids/book-club", label: "Clubs", emoji: "👥" },
+-  { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
+-  { href: "/kids/shop", label: "Shop", emoji: "🛍️" },
+-  { href: "/kids/trades", label: "Trades", emoji: "🔄" },
+-  { href: "/kids/buddy", label: "Buddy Reading", emoji: "🤝" },
+-  { href: "/kids/competitions", label: "Writing", emoji: "✍️" },
+   { href: "/kids/messages", label: "Messages", emoji: "💬" },
+   { href: "/kids/profile", label: "Profile", emoji: "🧑" },
+   { href: "/kids/settings", label: "Settings", emoji: "⚙️" },
+diff --git a/components/kids/OfflineReadingInfoCard.tsx b/components/kids/OfflineReadingInfoCard.tsx
+new file mode 100644
+index 0000000..c508efd
+--- /dev/null
++++ b/components/kids/OfflineReadingInfoCard.tsx
+@@ -0,0 +1,88 @@
++"use client";
++
++import { useEffect, useState } from "react";
++
++interface BeforeInstallPromptEvent extends Event {
++  prompt: () => Promise<void>;
++  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
++}
++
++/**
++ * Offline reading logging has existed since the PWA phase (public/sw.js,
++ * lib/offline-queue.ts, <OfflineBanner /> in the kids layout) but had no
++ * discoverable home -- the banner only ever appears while something is
++ * actually queued, so there was no way to find out the feature exists
++ * ahead of time, or to install the app for real offline use. This card
++ * is that home: explains what it does, shows live connection status,
++ * and offers the install prompt when the browser supports it.
++ */
++export function OfflineReadingInfoCard() {
++  const [isOnline, setIsOnline] = useState(true);
++  const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
++  const [installed, setInstalled] = useState(false);
++
++  useEffect(() => {
++    setIsOnline(navigator.onLine);
++    const goOnline = () => setIsOnline(true);
++    const goOffline = () => setIsOnline(false);
++    window.addEventListener("online", goOnline);
++    window.addEventListener("offline", goOffline);
++
++    if (window.matchMedia("(display-mode: standalone)").matches) {
++      setInstalled(true);
++    }
++
++    function onBeforeInstallPrompt(e: Event) {
++      e.preventDefault();
++      setInstallPromptEvent(e as BeforeInstallPromptEvent);
++    }
++    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
++
++    return () => {
++      window.removeEventListener("online", goOnline);
++      window.removeEventListener("offline", goOffline);
++      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
++    };
++  }, []);
++
++  async function handleInstall() {
++    if (!installPromptEvent) return;
++    await installPromptEvent.prompt();
++    const { outcome } = await installPromptEvent.userChoice;
++    if (outcome === "accepted") setInstalled(true);
++    setInstallPromptEvent(null);
++  }
++
++  return (
++    <section className="rounded-2xl bg-white p-5 shadow-sm">
++      <div className="flex items-center gap-2">
++        <span className="text-xl" aria-hidden="true">
++          {isOnline ? "🟢" : "📴"}
++        </span>
++        <h2 className="font-kids-display text-lg font-bold text-slate-900">Offline Reading</h2>
++      </div>
++      <p className="mt-2 text-sm text-slate-500">
++        No internet? No problem. Book Buddy saves your reading log on your
++        device and syncs it automatically the next time you're online — you
++        never lose progress. You&apos;re currently{" "}
++        <strong>{isOnline ? "online" : "offline (saving locally)"}</strong>.
++      </p>
++      {installed ? (
++        <p className="mt-3 text-sm font-semibold text-emerald-600">✓ Installed as an app on this device</p>
++      ) : installPromptEvent ? (
++        <button
++          type="button"
++          onClick={handleInstall}
++          className="mt-3 min-h-[44px] rounded-xl bg-kids-purple px-4 text-sm font-semibold text-white hover:opacity-90"
++        >
++          Install Book Buddy on this device
++        </button>
++      ) : (
++        <p className="mt-3 text-xs text-slate-400">
++          Tip: use your browser&apos;s &ldquo;Add to Home Screen&rdquo; option to install Book
++          Buddy and read offline anytime.
++        </p>
++      )}
++    </section>
++  );
++}
+diff --git a/components/parent/ChildDetailTabs.tsx b/components/parent/ChildDetailTabs.tsx
+new file mode 100644
+index 0000000..53a09eb
+--- /dev/null
++++ b/components/parent/ChildDetailTabs.tsx
+@@ -0,0 +1,274 @@
++"use client";
++
++import { useState, type ReactNode } from "react";
++import Image from "next/image";
++
++interface BookRef {
++  id: string;
++  title: string;
++  author: string;
++  cover_url: string | null;
++  genre: string | null;
++}
++interface EventRef {
++  id: string;
++  title: string;
++  status: string;
++  starts_at: string;
++  ends_at: string;
++}
++interface BadgeRef {
++  id: string;
++  name: string;
++  icon: string;
++  description: string | null;
++}
++
++interface Props {
++  last7Days: { label: string; minutes: number }[];
++  currentlyReading: { progressPercent: number; book: BookRef | null }[];
++  finishedBooks: { finishedAt: string | null; book: BookRef | null }[];
++  wantToRead: { book: BookRef | null }[];
++  eventEntries: { progress: number; rank: number | null; event: EventRef | null }[];
++  badges: { earnedAt: string; badge: BadgeRef | null }[];
++  submissions: {
++    id: string;
++    title: string;
++    votes: number;
++    isWinner: boolean;
++    createdAt: string;
++    competitionTitle: string | null;
++  }[];
++}
++
++const TABS = ["Overview", "Books", "Reading Time", "Events", "Discover"] as const;
++type Tab = (typeof TABS)[number];
++
++function BookRow({ book, right }: { book: BookRef | null; right?: ReactNode }) {
++  if (!book) return null;
++  return (
++    <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-3">
++      {book.cover_url ? (
++        <div className="relative h-14 w-10 shrink-0 overflow-hidden rounded">
++          <Image src={book.cover_url} alt="" fill className="object-cover" unoptimized />
++        </div>
++      ) : (
++        <div className="flex h-14 w-10 shrink-0 items-center justify-center rounded bg-slate-200 text-lg">📕</div>
++      )}
++      <div className="min-w-0 flex-1">
++        <p className="truncate font-semibold text-slate-900">{book.title}</p>
++        <p className="truncate text-sm text-parent-muted">
++          {book.author}
++          {book.genre ? ` · ${book.genre}` : ""}
++        </p>
++      </div>
++      {right}
++    </div>
++  );
++}
++
++export function ChildDetailTabs(props: Props) {
++  const [tab, setTab] = useState<Tab>("Overview");
++  const maxMinutes = Math.max(1, ...props.last7Days.map((d) => d.minutes));
++  const totalMinutesWeek = props.last7Days.reduce((a, d) => a + d.minutes, 0);
++
++  const placements = props.eventEntries.filter((e) => e.event);
++  const wonBooks = props.finishedBooks.filter((b) => b.book);
++
++  return (
++    <div className="mt-6">
++      <div className="flex gap-1 overflow-x-auto rounded-xl bg-white p-1 shadow-sm">
++        {TABS.map((t) => (
++          <button
++            key={t}
++            type="button"
++            onClick={() => setTab(t)}
++            className={`min-h-[40px] shrink-0 rounded-lg px-4 text-sm font-semibold transition ${
++              tab === t ? "bg-parent-primary text-white" : "text-slate-600 hover:bg-slate-50"
++            }`}
++          >
++            {t}
++          </button>
++        ))}
++      </div>
++
++      <div className="mt-4 rounded-2xl bg-white p-6 shadow-sm">
++        {tab === "Overview" && (
++          <div className="space-y-6">
++            <div>
++              <h3 className="font-semibold text-slate-900">This week</h3>
++              <div className="mt-3 flex items-end gap-2">
++                {props.last7Days.map((d) => (
++                  <div key={d.label} className="flex flex-1 flex-col items-center gap-1">
++                    <div className="flex h-24 w-full items-end rounded-md bg-slate-50">
++                      <div
++                        className="w-full rounded-md bg-parent-primary transition-all"
++                        style={{ height: `${Math.max(4, (d.minutes / maxMinutes) * 100)}%` }}
++                        title={`${d.minutes} min`}
++                      />
++                    </div>
++                    <span className="text-xs text-parent-muted">{d.label}</span>
++                  </div>
++                ))}
++              </div>
++              <p className="mt-2 text-sm text-parent-muted">{totalMinutesWeek} minutes read this week</p>
++            </div>
++
++            <div>
++              <h3 className="font-semibold text-slate-900">Badges earned ({props.badges.length})</h3>
++              {props.badges.length === 0 ? (
++                <p className="mt-2 text-sm text-parent-muted">No badges yet.</p>
++              ) : (
++                <div className="mt-2 flex flex-wrap gap-2">
++                  {props.badges.map(
++                    (b) =>
++                      b.badge && (
++                        <span
++                          key={b.badge.id}
++                          title={b.badge.description ?? b.badge.name}
++                          className="flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-800"
++                        >
++                          <span aria-hidden="true">{b.badge.icon}</span> {b.badge.name}
++                        </span>
++                      )
++                  )}
++                </div>
++              )}
++            </div>
++
++            <div>
++              <h3 className="font-semibold text-slate-900">Writing competitions</h3>
++              {props.submissions.length === 0 ? (
++                <p className="mt-2 text-sm text-parent-muted">No submissions yet.</p>
++              ) : (
++                <div className="mt-2 space-y-2">
++                  {props.submissions.map((s) => (
++                    <div key={s.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm">
++                      <div>
++                        <p className="font-semibold text-slate-900">
++                          {s.title} {s.isWinner && "🏆"}
++                        </p>
++                        <p className="text-parent-muted">{s.competitionTitle ?? "Writing competition"}</p>
++                      </div>
++                      <span className="text-parent-muted">{s.votes} votes</span>
++                    </div>
++                  ))}
++                </div>
++              )}
++            </div>
++          </div>
++        )}
++
++        {tab === "Books" && (
++          <div className="space-y-6">
++            <div>
++              <h3 className="font-semibold text-slate-900">Currently reading</h3>
++              {props.currentlyReading.length === 0 ? (
++                <p className="mt-2 text-sm text-parent-muted">Not currently reading anything.</p>
++              ) : (
++                <div className="mt-2 space-y-2">
++                  {props.currentlyReading.map(
++                    (r, i) =>
++                      r.book && (
++                        <BookRow
++                          key={r.book.id + i}
++                          book={r.book}
++                          right={<span className="text-sm font-semibold text-parent-primary">{r.progressPercent}%</span>}
++                        />
++                      )
++                  )}
++                </div>
++              )}
++            </div>
++            <div>
++              <h3 className="font-semibold text-slate-900">Finished ({wonBooks.length})</h3>
++              {wonBooks.length === 0 ? (
++                <p className="mt-2 text-sm text-parent-muted">No finished books yet.</p>
++              ) : (
++                <div className="mt-2 space-y-2">
++                  {wonBooks.map(
++                    (r, i) =>
++                      r.book && (
++                        <BookRow
++                          key={r.book.id + i}
++                          book={r.book}
++                          right={
++                            <span className="whitespace-nowrap text-xs text-parent-muted">
++                              {r.finishedAt ? new Date(r.finishedAt).toLocaleDateString() : ""}
++                            </span>
++                          }
++                        />
++                      )
++                  )}
++                </div>
++              )}
++            </div>
++          </div>
++        )}
++
++        {tab === "Reading Time" && (
++          <div>
++            <h3 className="font-semibold text-slate-900">Last 7 days</h3>
++            <div className="mt-3 space-y-2">
++              {props.last7Days.map((d) => (
++                <div key={d.label} className="flex items-center gap-3">
++                  <span className="w-10 text-sm text-parent-muted">{d.label}</span>
++                  <div className="h-3 flex-1 overflow-hidden rounded-full bg-slate-100">
++                    <div
++                      className="h-full rounded-full bg-parent-primary"
++                      style={{ width: `${Math.max(2, (d.minutes / maxMinutes) * 100)}%` }}
++                    />
++                  </div>
++                  <span className="w-16 text-right text-sm font-semibold text-slate-700">{d.minutes} min</span>
++                </div>
++              ))}
++            </div>
++          </div>
++        )}
++
++        {tab === "Events" && (
++          <div>
++            <h3 className="font-semibold text-slate-900">Weekend event participation</h3>
++            {placements.length === 0 ? (
++              <p className="mt-2 text-sm text-parent-muted">Hasn&apos;t joined a weekend event yet.</p>
++            ) : (
++              <div className="mt-2 space-y-2">
++                {placements.map(
++                  (e, i) =>
++                    e.event && (
++                      <div key={e.event.id + i} className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm">
++                        <div>
++                          <p className="font-semibold text-slate-900">{e.event.title}</p>
++                          <p className="text-parent-muted">
++                            {new Date(e.event.starts_at).toLocaleDateString()} · progress {e.progress}
++                          </p>
++                        </div>
++                        <span className="font-semibold text-parent-primary">
++                          {e.rank ? `#${e.rank}` : e.event.status === "closed" ? "Unranked" : "In progress"}
++                        </span>
++                      </div>
++                    )
++                )}
++              </div>
++            )}
++          </div>
++        )}
++
++        {tab === "Discover" && (
++          <div>
++            <h3 className="font-semibold text-slate-900">Wants to read ({props.wantToRead.length})</h3>
++            {props.wantToRead.length === 0 ? (
++              <p className="mt-2 text-sm text-parent-muted">
++                Nothing queued up right now — books they save from Discover will show up here.
++              </p>
++            ) : (
++              <div className="mt-2 space-y-2">
++                {props.wantToRead.map((r, i) => r.book && <BookRow key={r.book.id + i} book={r.book} />)}
++              </div>
++            )}
++          </div>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/lib/equipped-cosmetics.ts b/lib/equipped-cosmetics.ts
+new file mode 100644
+index 0000000..61665d4
+--- /dev/null
++++ b/lib/equipped-cosmetics.ts
+@@ -0,0 +1,56 @@
++import type { SupabaseClient } from "@supabase/supabase-js";
++
++export interface EquippedCosmeticItem {
++  id: string;
++  name: string;
++  icon_or_asset: string;
++  rarity: "common" | "rare" | "epic" | "legendary";
++}
++
++export interface EquippedCosmetics {
++  accessory: EquippedCosmeticItem | null;
++  pet: EquippedCosmeticItem | null;
++  shelfTheme: EquippedCosmeticItem | null;
++}
++
++/**
++ * Shop purchases (avatar_accessory / pet / shelf_theme) are equipped by
++ * writing an id onto users.equipped_avatar_accessory_id /
++ * equipped_pet_id / equipped_shelf_theme_id (see
++ * app/api/kids/shop/equip/route.ts) -- but nothing outside the shop page
++ * itself used to read those columns back, so a kid could buy and
++ * "equip" a pet or theme and never see it anywhere. This is the one
++ * place that resolves those three ids into the actual shop_items rows,
++ * so every screen that shows equipped cosmetics uses the same lookup.
++ */
++export async function getEquippedCosmetics(
++  supabase: SupabaseClient,
++  profile: {
++    equipped_avatar_accessory_id: string | null;
++    equipped_pet_id: string | null;
++    equipped_shelf_theme_id: string | null;
++  } | null
++): Promise<EquippedCosmetics> {
++  const ids = [
++    profile?.equipped_avatar_accessory_id,
++    profile?.equipped_pet_id,
++    profile?.equipped_shelf_theme_id,
++  ].filter((id): id is string => Boolean(id));
++
++  if (ids.length === 0) {
++    return { accessory: null, pet: null, shelfTheme: null };
++  }
++
++  const { data } = await supabase
++    .from("shop_items")
++    .select("id, name, icon_or_asset, rarity")
++    .in("id", ids);
++
++  const byId = new Map((data ?? []).map((item) => [item.id, item as EquippedCosmeticItem]));
++
++  return {
++    accessory: (profile?.equipped_avatar_accessory_id && byId.get(profile.equipped_avatar_accessory_id)) || null,
++    pet: (profile?.equipped_pet_id && byId.get(profile.equipped_pet_id)) || null,
++    shelfTheme: (profile?.equipped_shelf_theme_id && byId.get(profile.equipped_shelf_theme_id)) || null,
++  };
++}
+diff --git a/supabase/migrations/028_parent_dashboard_overhaul.sql b/supabase/migrations/028_parent_dashboard_overhaul.sql
+new file mode 100644
+index 0000000..71ca823
+--- /dev/null
++++ b/supabase/migrations/028_parent_dashboard_overhaul.sql
+@@ -0,0 +1,14 @@
++-- Parent dashboard overhaul needs to show each child's weekend-event
++-- placements and earned badges, but those tables only ever had a
++-- select-own policy (auth.uid() = user_id) -- a parent querying their
++-- child's event_entries or user_badges got zero rows back, silently,
++-- not an error. Same is_parent_of() pattern already used for
++-- reading_sessions/user_books/user_challenges.
++
++drop policy if exists "event_entries_parent_read" on public.event_entries;
++create policy "event_entries_parent_read" on public.event_entries for select
++  using (public.is_parent_of(user_id));
++
++drop policy if exists "user_badges_parent_read" on public.user_badges;
++create policy "user_badges_parent_read" on public.user_badges for select
++  using (public.is_parent_of(user_id));
+-- 
+2.43.0
+

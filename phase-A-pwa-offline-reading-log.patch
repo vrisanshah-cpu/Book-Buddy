@@ -1,0 +1,742 @@
+diff --git a/app/kids/layout.tsx b/app/kids/layout.tsx
+index db60a48..6fa0870 100644
+--- a/app/kids/layout.tsx
++++ b/app/kids/layout.tsx
+@@ -1,9 +1,11 @@
+ import { KidsNav } from "@/components/kids/KidsNav";
++import { OfflineBanner } from "@/components/kids/OfflineBanner";
+ 
+ export default function KidsLayout({ children }: { children: React.ReactNode }) {
+   return (
+     <div className="min-h-screen bg-kids-bg font-kids">
+       <KidsNav />
++      <OfflineBanner />
+       <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
+     </div>
+   );
+diff --git a/app/layout.tsx b/app/layout.tsx
+index 8a7c256..de1fe60 100644
+--- a/app/layout.tsx
++++ b/app/layout.tsx
+@@ -1,6 +1,7 @@
+-import type { Metadata } from "next";
++import type { Metadata, Viewport } from "next";
+ import { Nunito, Fredoka, Plus_Jakarta_Sans, DM_Sans } from "next/font/google";
+ import { GoogleAnalytics } from "@/components/analytics/GoogleAnalytics";
++import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
+ import "./globals.css";
+ 
+ const nunito = Nunito({
+@@ -33,6 +34,18 @@ export const metadata: Metadata = {
+   other: {
+     "google-adsense-account": "ca-pub-7877782569997046",
+   },
++  manifest: "/manifest.json",
++  icons: {
++    icon: [
++      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
++      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
++    ],
++    apple: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
++  },
++};
++
++export const viewport: Viewport = {
++  themeColor: "#7C3AED",
+ };
+ 
+ export default function RootLayout({
+@@ -45,6 +58,7 @@ export default function RootLayout({
+     >
+       <body className="font-sans antialiased">
+         <GoogleAnalytics />
++        <ServiceWorkerRegister />
+         {children}
+       </body>
+     </html>
+diff --git a/components/kids/OfflineBanner.tsx b/components/kids/OfflineBanner.tsx
+new file mode 100644
+index 0000000..0c1c2cf
+--- /dev/null
++++ b/components/kids/OfflineBanner.tsx
+@@ -0,0 +1,95 @@
++"use client";
++
++import { useEffect, useRef, useState } from "react";
++import { flushReadingLogQueue, getQueueCount, onQueueChange } from "@/lib/offline-queue";
++
++type Status = "hidden" | "offline" | "syncing" | "synced";
++
++/**
++ * Small, friendly banner shown above the kid nav whenever there's an
++ * offline reading log queued or being synced. Stays out of the way
++ * (hidden) the rest of the time.
++ */
++export function OfflineBanner() {
++  const [status, setStatus] = useState<Status>("hidden");
++  const [count, setCount] = useState(0);
++  const hadQueuedRef = useRef(false);
++
++  useEffect(() => {
++    let cancelled = false;
++
++    function refreshFromOnlineState(queued: number) {
++      if (cancelled) return;
++      if (queued > 0) hadQueuedRef.current = true;
++      if (!navigator.onLine && queued > 0) {
++        setStatus("offline");
++      } else if (navigator.onLine && queued > 0) {
++        setStatus("syncing");
++      } else if (hadQueuedRef.current) {
++        setStatus("synced");
++        hadQueuedRef.current = false;
++        setTimeout(() => !cancelled && setStatus("hidden"), 2500);
++      } else {
++        setStatus("hidden");
++      }
++      setCount(queued);
++    }
++
++    getQueueCount().then(refreshFromOnlineState);
++    const unsubscribe = onQueueChange(refreshFromOnlineState);
++
++    async function handleOnline() {
++      const { remaining } = await flushReadingLogQueue();
++      refreshFromOnlineState(remaining);
++    }
++    function handleOffline() {
++      getQueueCount().then(refreshFromOnlineState);
++    }
++
++    window.addEventListener("online", handleOnline);
++    window.addEventListener("offline", handleOffline);
++
++    // Fallback for browsers/devices where the "online" event doesn't
++    // reliably fire (e.g. some mobile webviews) — cheap periodic check.
++    const interval = setInterval(() => {
++      if (navigator.onLine) handleOnline();
++    }, 30000);
++
++    return () => {
++      cancelled = true;
++      unsubscribe();
++      window.removeEventListener("online", handleOnline);
++      window.removeEventListener("offline", handleOffline);
++      clearInterval(interval);
++    };
++  }, []);
++
++  if (status === "hidden") return null;
++
++  const config: Record<Exclude<Status, "hidden">, { emoji: string; text: string; className: string }> = {
++    offline: {
++      emoji: "📴",
++      text: count === 1 ? "Saved offline — will sync when you're back online" : `${count} reading logs saved offline — will sync when you're back online`,
++      className: "bg-amber-50 text-amber-800 ring-amber-200",
++    },
++    syncing: {
++      emoji: "🔄",
++      text: count === 1 ? "Syncing 1 saved reading log…" : `Syncing ${count} saved reading logs…`,
++      className: "bg-violet-50 text-violet-800 ring-violet-200",
++    },
++    synced: {
++      emoji: "✅",
++      text: "All synced!",
++      className: "bg-emerald-50 text-emerald-800 ring-emerald-200",
++    },
++  };
++
++  const { emoji, text, className } = config[status];
++
++  return (
++    <div className={`flex items-center justify-center gap-2 px-4 py-2 text-center text-sm font-semibold ring-1 ${className}`} role="status">
++      <span aria-hidden="true">{emoji}</span>
++      <span>{text}</span>
++    </div>
++  );
++}
+diff --git a/components/kids/ShelfClient.tsx b/components/kids/ShelfClient.tsx
+index 5520ad1..075c585 100644
+--- a/components/kids/ShelfClient.tsx
++++ b/components/kids/ShelfClient.tsx
+@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
+ import { Input } from "@/components/ui/Input";
+ import type { BookStatus } from "@/lib/types";
+ import type { CardRarity, CardCategory, CollectibleResult } from "@/lib/author-cards";
++import { queueReadingLog, type ReadingLogPayload } from "@/lib/offline-queue";
+ 
+ interface ShelfBook {
+   id: string;
+@@ -165,34 +166,60 @@ export function ShelfClient({ userId }: { userId: string }) {
+     }
+   }
+ 
+-  async function logSession() {
+-    if (!logBook) return;
+-    const res = await fetch("/api/reading/log", {
+-      method: "POST",
+-      headers: { "Content-Type": "application/json" },
+-      body: JSON.stringify({
+-        bookId: logBook.book.id,
+-        userBookId: logBook.id,
+-        minutesRead: minutes,
+-        pagesRead: pages,
+-        progressPercent: progress || logBook.progress_percent,
+-        markFinished,
+-      }),
+-    });
+-    const data = await res.json();
+-    if (markFinished || data.finishedBook) {
+-      confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
+-    }
+-    if (data.authorCard?.dropped) {
+-      setPackOpened(false);
+-      setCardReveal(data.authorCard as CollectibleResult);
+-    }
++  function resetLogModal() {
+     setLogBook(null);
+     setMinutes("");
+     setPages("");
+     setProgress("");
+     setMarkFinished(false);
+-    load();
++  }
++
++  async function logSession() {
++    if (!logBook) return;
++    const payload: ReadingLogPayload = {
++      bookId: logBook.book.id,
++      userBookId: logBook.id,
++      minutesRead: minutes,
++      pagesRead: pages,
++      progressPercent: progress || logBook.progress_percent,
++      markFinished,
++    };
++
++    // No connection at all — don't even attempt the round trip, just queue
++    // it. <OfflineBanner /> (in the kids layout) shows the kid this saved.
++    if (typeof navigator !== "undefined" && !navigator.onLine) {
++      await queueReadingLog(payload);
++      resetLogModal();
++      return;
++    }
++
++    try {
++      const res = await fetch("/api/reading/log", {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify(payload),
++      });
++      if (!res.ok) {
++        const data = await res.json().catch(() => ({}));
++        alert("Couldn't save that reading log: " + (data.error ?? res.status));
++        return;
++      }
++      const data = await res.json();
++      if (markFinished || data.finishedBook) {
++        confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
++      }
++      if (data.authorCard?.dropped) {
++        setPackOpened(false);
++        setCardReveal(data.authorCard as CollectibleResult);
++      }
++      resetLogModal();
++      load();
++    } catch {
++      // Fetch itself threw — connection dropped mid-request. Queue it
++      // rather than losing the kid's progress; it'll sync automatically.
++      await queueReadingLog(payload);
++      resetLogModal();
++    }
+   }
+ 
+   return (
+diff --git a/components/pwa/ServiceWorkerRegister.tsx b/components/pwa/ServiceWorkerRegister.tsx
+new file mode 100644
+index 0000000..9b7a4df
+--- /dev/null
++++ b/components/pwa/ServiceWorkerRegister.tsx
+@@ -0,0 +1,21 @@
++"use client";
++
++import { useEffect } from "react";
++
++/**
++ * Registers public/sw.js on mount. Renders nothing — this only exists to
++ * run a client-side effect from the (server) root layout. Safe to no-op
++ * on browsers without service worker support (e.g. some older embedded
++ * webviews).
++ */
++export function ServiceWorkerRegister() {
++  useEffect(() => {
++    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
++    navigator.serviceWorker.register("/sw.js").catch(() => {
++      // Installability/offline shell is a progressive enhancement — a
++      // failed registration should never block the app from working.
++    });
++  }, []);
++
++  return null;
++}
+diff --git a/lib/offline-queue.ts b/lib/offline-queue.ts
+new file mode 100644
+index 0000000..a01878b
+--- /dev/null
++++ b/lib/offline-queue.ts
+@@ -0,0 +1,141 @@
++// Offline queue for the reading-log endpoint (app/api/reading/log/route.ts).
++//
++// Why IndexedDB and not localStorage: the project rules rule out
++// localStorage/sessionStorage, and IndexedDB survives larger payloads and
++// concurrent tabs more safely. This file is client-only — every export
++// guards on `typeof window`/`indexedDB` so it's safe to import from a
++// "use client" component even during SSR/build.
++//
++// Consumers (e.g. ShelfClient.tsx) should:
++//   1. Try the real POST first.
++//   2. On a network failure (fetch throw) or when navigator.onLine is
++//      false, call queueReadingLog(payload) instead of surfacing an error.
++//   3. Not worry about flushing themselves — flushReadingLogQueue() is
++//      called automatically by <OfflineBanner /> on the "online" event and
++//      on a periodic fallback timer (see components/kids/OfflineBanner.tsx).
++
++const DB_NAME = "book-buddy-offline";
++const DB_VERSION = 1;
++const STORE_NAME = "reading-log-queue";
++const CHANGE_EVENT = "bb-offline-queue-changed";
++const READING_LOG_ENDPOINT = "/api/reading/log";
++
++export interface ReadingLogPayload {
++  bookId: string;
++  userBookId: string | null;
++  minutesRead: number | string;
++  pagesRead: number | string;
++  progressPercent: number | string | null;
++  markFinished: boolean;
++}
++
++export interface QueuedReadingLog {
++  id: number;
++  payload: ReadingLogPayload;
++  queuedAt: string;
++}
++
++function isSupported() {
++  return typeof window !== "undefined" && "indexedDB" in window;
++}
++
++function openDb(): Promise<IDBDatabase> {
++  return new Promise((resolve, reject) => {
++    if (!isSupported()) {
++      reject(new Error("IndexedDB not supported in this environment"));
++      return;
++    }
++    const request = indexedDB.open(DB_NAME, DB_VERSION);
++    request.onupgradeneeded = () => {
++      const db = request.result;
++      if (!db.objectStoreNames.contains(STORE_NAME)) {
++        db.createObjectStore(STORE_NAME, { keyPath: "id", autoIncrement: true });
++      }
++    };
++    request.onsuccess = () => resolve(request.result);
++    request.onerror = () => reject(request.error);
++  });
++}
++
++async function withStore<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
++  const db = await openDb();
++  return new Promise((resolve, reject) => {
++    const tx = db.transaction(STORE_NAME, mode);
++    const store = tx.objectStore(STORE_NAME);
++    const request = fn(store);
++    request.onsuccess = () => resolve(request.result);
++    request.onerror = () => reject(request.error);
++    tx.oncomplete = () => db.close();
++  });
++}
++
++async function emitChange() {
++  const count = await getQueueCount().catch(() => 0);
++  if (typeof window !== "undefined") {
++    window.dispatchEvent(new CustomEvent<{ count: number }>(CHANGE_EVENT, { detail: { count } }));
++  }
++}
++
++/** Queue a reading-log entry for later sync. Resolves once it's durably stored. */
++export async function queueReadingLog(payload: ReadingLogPayload): Promise<void> {
++  if (!isSupported()) return;
++  await withStore("readwrite", (store) =>
++    store.add({ payload, queuedAt: new Date().toISOString() } as Omit<QueuedReadingLog, "id">)
++  );
++  await emitChange();
++}
++
++export async function getQueuedReadingLogs(): Promise<QueuedReadingLog[]> {
++  if (!isSupported()) return [];
++  return withStore("readonly", (store) => store.getAll()) as Promise<QueuedReadingLog[]>;
++}
++
++export async function getQueueCount(): Promise<number> {
++  if (!isSupported()) return 0;
++  return withStore("readonly", (store) => store.count());
++}
++
++async function removeQueuedReadingLog(id: number): Promise<void> {
++  await withStore("readwrite", (store) => store.delete(id));
++}
++
++/**
++ * Flushes queued reading logs to the API in the order they were queued.
++ * Stops at the first failure (network error or non-ok response) so entries
++ * stay in order and we don't hammer an endpoint that's still unreachable —
++ * the next "online" event or periodic check will retry from there.
++ */
++export async function flushReadingLogQueue(): Promise<{ flushed: number; remaining: number }> {
++  if (!isSupported() || typeof navigator !== "undefined" && !navigator.onLine) {
++    return { flushed: 0, remaining: await getQueueCount() };
++  }
++
++  const entries = await getQueuedReadingLogs();
++  let flushed = 0;
++
++  for (const entry of entries) {
++    try {
++      const res = await fetch(READING_LOG_ENDPOINT, {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify(entry.payload),
++      });
++      if (!res.ok) break; // server rejected it or is down — stop, keep order
++      await removeQueuedReadingLog(entry.id);
++      flushed += 1;
++    } catch {
++      break; // still offline / network error — stop, retry later
++    }
++  }
++
++  if (flushed > 0) await emitChange();
++  return { flushed, remaining: await getQueueCount() };
++}
++
++/** Subscribe to queue-length changes (add, remove, flush). Returns an unsubscribe fn. */
++export function onQueueChange(listener: (count: number) => void): () => void {
++  if (typeof window === "undefined") return () => {};
++  const handler = (e: Event) => listener((e as CustomEvent<{ count: number }>).detail.count);
++  window.addEventListener(CHANGE_EVENT, handler);
++  return () => window.removeEventListener(CHANGE_EVENT, handler);
++}
+diff --git a/public/icons/icon-192.png b/public/icons/icon-192.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..3cacf428d2b48a83040c6c5da3cd242df2c5f76a
+GIT binary patch
+literal 1726
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/public/icons/icon-512.png b/public/icons/icon-512.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..269df06faaa3340160a33468263707a547dfe208
+GIT binary patch
+literal 4812
+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
+JpIgaG{~u-_4OsvH
+
+literal 0
+HcmV?d00001
+
+diff --git a/public/manifest.json b/public/manifest.json
+new file mode 100644
+index 0000000..7d86c89
+--- /dev/null
++++ b/public/manifest.json
+@@ -0,0 +1,25 @@
++{
++  "name": "Book Buddy",
++  "short_name": "Book Buddy",
++  "description": "A safe, interactive reading companion for kids, parents, and teachers.",
++  "start_url": "/",
++  "scope": "/",
++  "display": "standalone",
++  "orientation": "portrait-primary",
++  "background_color": "#F5F3FF",
++  "theme_color": "#7C3AED",
++  "icons": [
++    {
++      "src": "/icons/icon-192.png",
++      "sizes": "192x192",
++      "type": "image/png",
++      "purpose": "any maskable"
++    },
++    {
++      "src": "/icons/icon-512.png",
++      "sizes": "512x512",
++      "type": "image/png",
++      "purpose": "any maskable"
++    }
++  ]
++}
+diff --git a/public/offline.html b/public/offline.html
+new file mode 100644
+index 0000000..19204e3
+--- /dev/null
++++ b/public/offline.html
+@@ -0,0 +1,69 @@
++<!doctype html>
++<html lang="en">
++  <head>
++    <meta charset="utf-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1" />
++    <title>Book Buddy — Offline</title>
++    <style>
++      html,
++      body {
++        height: 100%;
++        margin: 0;
++      }
++      body {
++        display: flex;
++        align-items: center;
++        justify-content: center;
++        background: #f5f3ff;
++        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
++        color: #1e1b2e;
++        text-align: center;
++        padding: 24px;
++        box-sizing: border-box;
++      }
++      .card {
++        max-width: 360px;
++      }
++      .emoji {
++        font-size: 56px;
++        line-height: 1;
++        margin-bottom: 16px;
++      }
++      h1 {
++        font-size: 20px;
++        margin: 0 0 8px;
++        color: #7c3aed;
++      }
++      p {
++        font-size: 15px;
++        color: #4b5563;
++        margin: 0 0 20px;
++        line-height: 1.5;
++      }
++      button {
++        border: none;
++        border-radius: 12px;
++        background: #7c3aed;
++        color: white;
++        font-weight: 600;
++        font-size: 15px;
++        padding: 10px 20px;
++        cursor: pointer;
++      }
++      button:hover {
++        background: #6d28d9;
++      }
++    </style>
++  </head>
++  <body>
++    <div class="card">
++      <div class="emoji">📴📚</div>
++      <h1>You're offline</h1>
++      <p>
++        No internet connection right now. Any reading you log will be saved on
++        this device and synced automatically once you're back online.
++      </p>
++      <button onclick="location.reload()">Try again</button>
++    </div>
++  </body>
++</html>
+diff --git a/public/sw.js b/public/sw.js
+new file mode 100644
+index 0000000..1d04116
+--- /dev/null
++++ b/public/sw.js
+@@ -0,0 +1,72 @@
++// Book Buddy service worker.
++//
++// Scope: PWA installability + offline access to the public shell (landing
++// page + static PWA assets) only. It deliberately does NOT cache or
++// intercept anything under /api/, any POST/PUT/DELETE request, or any
++// authenticated kid/parent/teacher page — those stay live-network-only so
++// a kid never sees stale or another session's cached data. The offline
++// reading-log queue is handled separately in lib/offline-queue.ts via
++// IndexedDB, not by this worker.
++//
++// Bump CACHE_NAME whenever SHELL_ASSETS changes so old caches get cleared
++// on the next activate.
++const CACHE_NAME = "book-buddy-shell-v1";
++const SHELL_ASSETS = ["/", "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png", "/offline.html"];
++
++self.addEventListener("install", (event) => {
++  event.waitUntil(
++    caches
++      .open(CACHE_NAME)
++      .then((cache) => cache.addAll(SHELL_ASSETS))
++      .catch(() => {
++        // Best-effort precache — a single failed asset (e.g. first deploy
++        // before icons exist) shouldn't block install.
++      })
++  );
++  self.skipWaiting();
++});
++
++self.addEventListener("activate", (event) => {
++  event.waitUntil(
++    caches
++      .keys()
++      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
++      .then(() => self.clients.claim())
++  );
++});
++
++self.addEventListener("fetch", (event) => {
++  const { request } = event;
++
++  if (request.method !== "GET") return; // never touch POST /api/reading/log etc.
++
++  const url = new URL(request.url);
++  if (url.origin !== self.location.origin) return; // Supabase/Gemini calls pass straight through
++  if (url.pathname.startsWith("/api/")) return;
++
++  const isNavigation = request.mode === "navigate";
++  const isStaticShellAsset = url.pathname.startsWith("/icons/") || url.pathname === "/manifest.json";
++
++  if (!isNavigation && !isStaticShellAsset) return;
++
++  event.respondWith(
++    fetch(request)
++      .then((response) => {
++        const responseCopy = response.clone();
++        caches
++          .open(CACHE_NAME)
++          .then((cache) => cache.put(request, responseCopy))
++          .catch(() => {});
++        return response;
++      })
++      .catch(async () => {
++        const cached = await caches.match(request);
++        if (cached) return cached;
++        if (isNavigation) {
++          const offlineFallback = await caches.match("/offline.html");
++          if (offlineFallback) return offlineFallback;
++        }
++        return Response.error();
++      })
++  );
++});

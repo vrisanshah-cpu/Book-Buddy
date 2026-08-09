@@ -1,0 +1,654 @@
+From 0cc8dee85aec140d2c4bf2529ef3f171fe263f88 Mon Sep 17 00:00:00 2001
+From: Vrisan <vrisanshah@gmail.com>
+Date: Thu, 6 Aug 2026 05:38:50 +0000
+Subject: [PATCH] phase-R-ai-cost-optimization
+
+Milestone 4.1 (caching) + 4.3 (model tiering), plus the two specific
+cost cuts from the Aug 4 emails (writing-competition AI feedback,
+comment moderation) and the parent-digest opt-in redesign.
+
+lib/gemini.ts:
+- callGemini() now takes an optional tier ('lite' | 'flash' | 'pro'),
+  defaulting to 'lite'. Nothing routes to 'pro' yet -- no call site
+  in the app currently needs it, so there was nothing honest to wire
+  up for Milestone 4.3's high-reasoning tier without inventing a use
+  case. The routing is in place for when one shows up.
+- callGemini() now takes an optional cacheKey + cacheTtlMinutes. When
+  set, identical requests reuse a cached Supabase row instead of
+  hitting the API. Cache reads/writes fail open -- a cache outage
+  degrades to normal (uncached) behavior, never breaks a request.
+
+supabase/migrations/027_ai_cost_optimization.sql:
+- ai_response_cache table backing the above.
+- users.ai_weekly_summary_enabled (default false) for the parent
+  digest opt-in below.
+
+Caching wired into the two highest-value, safely-cacheable call sites:
+- reading-game quiz generation: cached by title+author (not user id) --
+  every kid who reads the same book now gets the same cached quiz
+  instead of a fresh generation. 90-day TTL.
+- books/recommend: cached by shelf contents + content restrictions.
+  12-hour TTL since a shelf changes often.
+Left uncached: pip-chat (conversational, no reuse),
+challenges/generate-personal (personalized on live stats, low reuse),
+generate-weekend-event (deliberately wants variety week to week --
+caching would defeat its own anti-repetition logic).
+
+Writing competition submissions (per the Aug 4 email):
+- AI feedback is now feature-flagged off by default
+  (ENABLE_AI_STORY_FEEDBACK=true to re-enable). Default path picks
+  from 5 hardcoded encouraging messages, zero API calls. Same
+  ai_feedback column, so no DB migration needed for this part.
+
+Comment moderation (per the Aug 4 email, plus the safer approach it
+asked me to propose before implementing):
+- Plain 'skip Gemini after profanity filter passes' would let non-
+  profane bullying through uncaught ('nobody likes your story',
+  etc.), so this is a 3-stage pipeline instead:
+    1. Profanity filter (existing) -- reject immediately, no API call.
+    2. New lib/comment-risk-heuristics.ts -- keyword/pattern check for
+       non-profane meanness, ALL CAPS, aggressive punctuation. If
+       nothing trips it, approve without calling Gemini. This is the
+       large majority of comments (genuine, kind feedback).
+    3. Gemini -- only for the flagged minority, a real judgment call.
+- Also changed the failure behavior: previously, if Gemini was
+  unavailable/errored, ANY comment (including ones the old prompt
+  would have rejected) fail-opened to approved. Now: only comments
+  that never got flagged auto-approve; anything the heuristic flagged
+  fails CLOSED (rejected) if Gemini can't be reached, since fail-open
+  for a comment already suspected of being unkind is the wrong
+  default for a kids' product. Flagging this since it's a behavior
+  change beyond just cost-cutting.
+
+Parent weekly digest (per the Aug 4 email):
+- AI summaries are now opt-in, default OFF -- every parent gets the
+  free template digest unless they've turned on 'Enhanced AI Weekly
+  Reading Summary' in Parent Settings (new toggle, optimistic UI,
+  reverts on save failure).
+- Even when opted in: skipped (falls back to template) when a child
+  had no meaningful activity that week, so an idle week doesn't burn
+  a call to describe nothing happening.
+- Still exactly one Gemini call per parent regardless of child count
+  (unchanged -- this was already true). Prompt reworded to be more
+  terse (fewer restated instructions) to cut token usage per call.
+- Cached per parent+week+data so a duplicate cron execution (retries,
+  manual re-runs) reuses the prior result instead of regenerating it.
+- Cron schedule, email HTML, and fallback behavior all unchanged.
+
+Not done in this pass -- flagging rather than silently skipping:
+- Milestone 4.2 (client-side logic offload) needs a per-feature audit
+  I haven't done yet -- didn't want to guess at which client-side
+  calculations are safe to move without seeing how they're tested.
+- Milestones 4.4/4.5 (daily quotas + rewarded ads) as spec'd don't fit
+  cleanly: pip-chat, quizzes, recommendations, and challenge generation
+  are all kid-facing, and the landing page explicitly promises kids
+  never see ads. Rewarding AI quota with an ad only makes sense on the
+  parent/teacher side -- e.g. gating the AI weekly summary itself, or
+  a future parent-facing generative feature. Didn't want to build
+  ad-gating that contradicts the site's own stated promise without
+  checking that's actually what's wanted first.
+---
+ app/api/books/recommend/route.ts              | 11 ++-
+ app/api/competitions/[id]/comment/route.ts    | 23 ++++-
+ app/api/competitions/[id]/submit/route.ts     | 33 ++++++-
+ app/api/cron/parent-digest/route.ts           | 46 ++++++++--
+ app/api/pip-chat/route.ts                     |  2 +-
+ app/api/reading-game/route.ts                 |  6 +-
+ app/parent/settings/page.tsx                  | 14 ++-
+ components/parent/ParentSettingsClient.tsx    | 45 +++++++++
+ lib/comment-risk-heuristics.ts                | 49 ++++++++++
+ lib/gemini.ts                                 | 92 ++++++++++++++++++-
+ .../migrations/027_ai_cost_optimization.sql   | 26 ++++++
+ 11 files changed, 328 insertions(+), 19 deletions(-)
+ create mode 100644 lib/comment-risk-heuristics.ts
+ create mode 100644 supabase/migrations/027_ai_cost_optimization.sql
+
+diff --git a/app/api/books/recommend/route.ts b/app/api/books/recommend/route.ts
+index dfd708e..b7ee219 100644
+--- a/app/api/books/recommend/route.ts
++++ b/app/api/books/recommend/route.ts
+@@ -43,7 +43,16 @@ export async function POST() {
+     (blockLines.length > 0 ? `\n\nContent restrictions from this child's parent/teacher:\n${blockLines.join("\n")}` : "");
+ 
+   try {
+-    const raw = await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }], { jsonMode: true });
++    // Cached on the shelf contents + active content restrictions, not the
++    // user id -- two kids with the same shelf and no restrictions get the
++    // same cached recommendations. Short TTL since a shelf changes often.
++    const cacheKey = `recommend:v1:${[...readBooks].sort().join("|")}::${blockLines.join("|")}`;
++    const raw = await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }], {
++      jsonMode: true,
++      tier: "lite",
++      cacheKey,
++      cacheTtlMinutes: 60 * 12,
++    });
+     const parsed = JSON.parse(raw);
+     // Prompt-level exclusion is best-effort — always enforce authoritatively here too.
+     parsed.recommendations = filterBlockedBooks(blocks, parsed.recommendations ?? []);
+diff --git a/app/api/competitions/[id]/comment/route.ts b/app/api/competitions/[id]/comment/route.ts
+index 63b8029..9ee6b72 100644
+--- a/app/api/competitions/[id]/comment/route.ts
++++ b/app/api/competitions/[id]/comment/route.ts
+@@ -2,19 +2,36 @@ import { NextResponse } from "next/server";
+ import { createClient } from "@/lib/supabase/server";
+ import { callGemini, hasGeminiKey } from "@/lib/gemini";
+ import { containsProfanity } from "@/lib/profanity-filter";
++import { needsModerationReview } from "@/lib/comment-risk-heuristics";
+ 
+ const MODERATION_SYSTEM_PROMPT = `You moderate comments kids (ages 5-12) leave on each other's writing-competition stories. Reply with ONLY valid JSON, no markdown: {"approved": true or false}. Reject anything containing bullying, insults, harassment, cruelty, or content unsafe for children. Approve genuine, kind, or neutral feedback (including plain constructive criticism like "the ending felt rushed").`;
+ 
++// Three-stage moderation, each stage only running if the one before it
++// didn't already decide:
++//  1. Profanity filter (free, instant) -- reject immediately on a match.
++//  2. Heuristic risk check (free, instant) -- catches non-profane
++//     cruelty ("nobody likes this," "you're so stupid"). If nothing
++//     trips it, approve without ever calling Gemini -- this covers the
++//     large majority of comments, which are genuine and kind.
++//  3. Gemini (only for the flagged minority) -- a real judgment call on
++//     comments that might be harsh sarcasm, backhanded "feedback," or
++//     something the keyword list can't cleanly resolve either way.
++// This keeps a real safety net for the cases that matter while cutting
++// Gemini calls to a small fraction of total comment volume.
+ async function isCommentApproved(text: string): Promise<boolean> {
+   if (containsProfanity(text)) return false;
+-  if (!hasGeminiKey()) return true; // fail-open to plain profanity filtering only, matching other AI-optional features
++  if (!needsModerationReview(text)) return true;
++  if (!hasGeminiKey()) return false; // flagged as risky and no AI available -- reject rather than fail-open
+ 
+   try {
+-    const raw = await callGemini(MODERATION_SYSTEM_PROMPT, [{ role: "user", text }], { jsonMode: true });
++    const raw = await callGemini(MODERATION_SYSTEM_PROMPT, [{ role: "user", text }], {
++      jsonMode: true,
++      tier: "lite",
++    });
+     const parsed = JSON.parse(raw);
+     return Boolean(parsed.approved);
+   } catch {
+-    return true;
++    return false; // flagged as risky and Gemini failed -- reject rather than fail-open
+   }
+ }
+ 
+diff --git a/app/api/competitions/[id]/submit/route.ts b/app/api/competitions/[id]/submit/route.ts
+index 362ad35..137255a 100644
+--- a/app/api/competitions/[id]/submit/route.ts
++++ b/app/api/competitions/[id]/submit/route.ts
+@@ -4,8 +4,31 @@ import { callGemini, hasGeminiKey } from "@/lib/gemini";
+ 
+ const FEEDBACK_SYSTEM_PROMPT = `You give short, warm, encouraging writing feedback to kids ages 5-12 who just submitted a story to a writing competition. 2-4 sentences: point out one specific thing they did well, then one gentle, constructive suggestion. Age-appropriate, kind, never harsh. Plain text, no markdown.`;
+ 
++// AI feedback is now opt-in infrastructure, not the default -- every
++// submission used to trigger a Gemini call for feedback that isn't
++// essential to the feature. Set ENABLE_AI_STORY_FEEDBACK=true to restore
++// the old behavior. Default (unset/false) uses these hardcoded messages
++// instead, at zero API cost.
++const ENCOURAGING_FALLBACKS = [
++  (title: string) =>
++    `Great work finishing "${title}"! Keep practicing descriptive details in your next story — try adding what a character sees, hears, or feels.`,
++  (title: string) =>
++    `You did it — "${title}" is finished! One thing to try next time: give your main character a clear want, then a problem standing in the way.`,
++  (title: string) =>
++    `"${title}" is done and that's worth celebrating! For your next story, try starting in the middle of the action instead of at the very beginning.`,
++  (title: string) =>
++    `Nice job finishing "${title}"! Next time, try reading your story out loud — it's a great way to catch spots that could use more detail.`,
++  (title: string) =>
++    `You finished "${title}" — awesome! A fun challenge for next time: give your story a surprising ending nobody would expect.`,
++];
++
+ function fallbackFeedback(title: string): string {
+-  return `Great work finishing "${title}"! Keep practicing descriptive details in your next story — try adding what a character sees, hears, or feels.`;
++  const pick = ENCOURAGING_FALLBACKS[Math.floor(Math.random() * ENCOURAGING_FALLBACKS.length)];
++  return pick(title);
++}
++
++function aiFeedbackEnabled(): boolean {
++  return process.env.ENABLE_AI_STORY_FEEDBACK === "true";
+ }
+ 
+ export async function POST(request: Request, { params }: { params: { id: string } }) {
+@@ -35,9 +58,13 @@ export async function POST(request: Request, { params }: { params: { id: string
+   }
+ 
+   let aiFeedback: string;
+-  if (hasGeminiKey()) {
++  if (aiFeedbackEnabled() && hasGeminiKey()) {
+     try {
+-      aiFeedback = await callGemini(FEEDBACK_SYSTEM_PROMPT, [{ role: "user", text: `Title: ${title}\n\n${content}` }]);
++      aiFeedback = await callGemini(
++        FEEDBACK_SYSTEM_PROMPT,
++        [{ role: "user", text: `Title: ${title}\n\n${content}` }],
++        { tier: "lite" }
++      );
+     } catch {
+       aiFeedback = fallbackFeedback(title);
+     }
+diff --git a/app/api/cron/parent-digest/route.ts b/app/api/cron/parent-digest/route.ts
+index 9148181..87d2285 100644
+--- a/app/api/cron/parent-digest/route.ts
++++ b/app/api/cron/parent-digest/route.ts
+@@ -32,18 +32,42 @@ function buildFallbackDigestText(children: ChildStats[]): string {
+     .join("\n\n");
+ }
+ 
+-async function buildDigestText(children: ChildStats[]): Promise<string> {
+-  if (!hasGeminiKey()) return buildFallbackDigestText(children);
++function hasMeaningfulActivity(children: ChildStats[]): boolean {
++  return children.some(
++    (c) => c.minutesThisWeek > 0 || c.booksFinishedThisWeek > 0 || c.newBadges.length > 0
++  );
++}
+ 
++// AI summaries are opt-in (Parent Settings > "Enhanced AI Weekly Reading
++// Summary", default OFF) -- every parent gets the free template digest
++// unless they've explicitly turned this on. Cached per parent+week+data
++// so a duplicate cron execution reuses the same summary instead of
++// re-generating it. No retry on failure -- fall straight back to the
++// template.
++async function buildDigestText(
++  children: ChildStats[],
++  opts: { aiEnabled: boolean; weekKey: string }
++): Promise<string> {
++  if (!opts.aiEnabled || !hasGeminiKey()) return buildFallbackDigestText(children);
++  if (!hasMeaningfulActivity(children)) return buildFallbackDigestText(children);
++
++  // Deliberately terse to keep token usage down -- no extra framing, no
++  // restated instructions beyond what's in the system prompt.
+   const prompt = children
+     .map(
+       (c) =>
+-        `${c.displayName}: ${c.minutesThisWeek} minutes read, ${c.booksFinishedThisWeek} books finished, ${c.newBadges.length} new badges (${c.newBadges.join(", ") || "none"}), ${c.currentStreak}-day current streak.`
++        `${c.displayName}: ${c.minutesThisWeek}min, ${c.booksFinishedThisWeek} books, badges: ${c.newBadges.join(", ") || "none"}, streak: ${c.currentStreak}d.`
+     )
+     .join("\n");
+ 
++  const cacheKey = `parent-digest:v1:${opts.weekKey}:${prompt}`;
++
+   try {
+-    return await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }]);
++    return await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }], {
++      tier: "lite",
++      cacheKey,
++      cacheTtlMinutes: 60 * 24 * 3,
++    });
+   } catch {
+     return buildFallbackDigestText(children);
+   }
+@@ -74,10 +98,17 @@ export async function GET(request: Request) {
+   const admin = createAdminClient();
+   let digestsSent = 0;
+ 
+-  const { data: parents } = await admin.from("users").select("id, display_name, email").eq("role", "parent").not("email", "is", null);
++  const { data: parents } = await admin
++    .from("users")
++    .select("id, display_name, email, ai_weekly_summary_enabled")
++    .eq("role", "parent")
++    .not("email", "is", null);
+ 
+   const weekAgo = new Date();
+   weekAgo.setDate(weekAgo.getDate() - 7);
++  // Coarse weekly bucket for the cache key -- stable across retries of
++  // the same cron run within the same week, changes naturally next week.
++  const weekKey = weekAgo.toISOString().split("T")[0];
+ 
+   for (const parent of parents ?? []) {
+     const { data: links } = await admin.from("parent_child").select("child_id").eq("parent_id", parent.id);
+@@ -126,7 +157,10 @@ export async function GET(request: Request) {
+ 
+     if (childStats.length === 0) continue;
+ 
+-    const summaryText = await buildDigestText(childStats);
++    const summaryText = await buildDigestText(childStats, {
++      aiEnabled: Boolean(parent.ai_weekly_summary_enabled),
++      weekKey,
++    });
+     const result = await sendEmail({
+       to: parent.email as string,
+       subject: "Your weekly Book Buddy digest 📚",
+diff --git a/app/api/pip-chat/route.ts b/app/api/pip-chat/route.ts
+index 559c2b6..ba577f9 100644
+--- a/app/api/pip-chat/route.ts
++++ b/app/api/pip-chat/route.ts
+@@ -62,7 +62,7 @@ export async function POST(request: Request) {
+ 
+   let reply: string;
+   try {
+-    reply = await callGemini(finalSystemPrompt, turns);
++    reply = await callGemini(finalSystemPrompt, turns, { tier: "lite" });
+   } catch {
+     return NextResponse.json(
+       { error: "Pip is taking a nap. Try again in a bit!" },
+diff --git a/app/api/reading-game/route.ts b/app/api/reading-game/route.ts
+index f05bdc0..9d1c684 100644
+--- a/app/api/reading-game/route.ts
++++ b/app/api/reading-game/route.ts
+@@ -40,6 +40,10 @@ export async function POST(request: Request) {
+     }
+ 
+     try {
++      // Same book -> same quiz for every kid who reads it, so this is
++      // cached by title+author only (never by user id). Long TTL since a
++      // book's quiz has no reason to change.
++      const cacheKey = `quiz:v1:${(title ?? "").trim().toLowerCase()}:${(author ?? "").trim().toLowerCase()}`;
+       const raw = await callGemini(
+         QUIZ_SYSTEM_PROMPT,
+         [
+@@ -48,7 +52,7 @@ export async function POST(request: Request) {
+             text: `Book: "${title}" by ${author}. ${description ? `Summary: ${description}` : ""}`,
+           },
+         ],
+-        { jsonMode: true }
++        { jsonMode: true, tier: "lite", cacheKey, cacheTtlMinutes: 60 * 24 * 90 }
+       );
+       const parsed = JSON.parse(raw.replace(/```json\n?|\n?```/g, "").trim());
+       return NextResponse.json(parsed);
+diff --git a/app/parent/settings/page.tsx b/app/parent/settings/page.tsx
+index cf7cdd3..65c9d51 100644
+--- a/app/parent/settings/page.tsx
++++ b/app/parent/settings/page.tsx
+@@ -22,5 +22,17 @@ export default async function ParentSettingsPage() {
+     };
+   });
+ 
+-  return <ParentSettingsClient parentId={user.id} initialChildren={linkedChildProfiles} />;
++  const { data: settingsRow } = await supabase
++    .from("users")
++    .select("ai_weekly_summary_enabled")
++    .eq("id", user.id)
++    .single();
++
++  return (
++    <ParentSettingsClient
++      parentId={user.id}
++      initialChildren={linkedChildProfiles}
++      initialAiWeeklySummaryEnabled={Boolean(settingsRow?.ai_weekly_summary_enabled)}
++    />
++  );
+ }
+\ No newline at end of file
+diff --git a/components/parent/ParentSettingsClient.tsx b/components/parent/ParentSettingsClient.tsx
+index ea7f433..c15a5f9 100644
+--- a/components/parent/ParentSettingsClient.tsx
++++ b/components/parent/ParentSettingsClient.tsx
+@@ -19,13 +19,17 @@ const AVATARS = ["🦊", "🐼", "🦁", "🐸", "🦄", "🐨"];
+ export function ParentSettingsClient({
+   parentId,
+   initialChildren,
++  initialAiWeeklySummaryEnabled,
+ }: {
+   parentId: string;
+   initialChildren: ParentChildProfileData[];
++  initialAiWeeklySummaryEnabled: boolean;
+ }) {
+   const supabase = createClient();
+   const router = useRouter();
+   const [linkedChildren, setLinkedChildren] = useState<ParentChildProfileData[]>(initialChildren);
++  const [aiWeeklySummaryEnabled, setAiWeeklySummaryEnabled] = useState(initialAiWeeklySummaryEnabled);
++  const [aiToggleSaving, setAiToggleSaving] = useState(false);
+   const [username, setUsername] = useState("");
+   const [displayName, setDisplayName] = useState("");
+   const [age, setAge] = useState("8");
+@@ -122,6 +126,18 @@ export function ParentSettingsClient({
+     }
+   }
+ 
++  async function toggleAiWeeklySummary() {
++    const next = !aiWeeklySummaryEnabled;
++    setAiWeeklySummaryEnabled(next); // optimistic
++    setAiToggleSaving(true);
++    const { error } = await supabase
++      .from("users")
++      .update({ ai_weekly_summary_enabled: next })
++      .eq("id", parentId);
++    setAiToggleSaving(false);
++    if (error) setAiWeeklySummaryEnabled(!next); // revert on failure
++  }
++
+   async function signOut() {
+     await supabase.auth.signOut();
+     window.location.href = "/auth/login";
+@@ -131,6 +147,35 @@ export function ParentSettingsClient({
+     <div>
+       <h1 className="text-2xl font-bold">Settings</h1>
+ 
++      <section className="mt-8 rounded-xl bg-white p-6 shadow-sm">
++        <div className="flex items-start justify-between gap-4">
++          <div>
++            <h2 className="font-semibold">Enhanced AI Weekly Reading Summary</h2>
++            <p className="mt-1 text-sm text-slate-500">
++              By default your weekly digest email uses a simple, free summary. Turn
++              this on for a more personalized, AI-written version of the same email
++              instead. You can switch it off again anytime.
++            </p>
++          </div>
++          <button
++            type="button"
++            role="switch"
++            aria-checked={aiWeeklySummaryEnabled}
++            disabled={aiToggleSaving}
++            onClick={toggleAiWeeklySummary}
++            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
++              aiWeeklySummaryEnabled ? "bg-parent-primary" : "bg-slate-300"
++            } ${aiToggleSaving ? "opacity-60" : ""}`}
++          >
++            <span
++              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
++                aiWeeklySummaryEnabled ? "translate-x-5" : "translate-x-0.5"
++              }`}
++            />
++          </button>
++        </div>
++      </section>
++
+       <section className="mt-8">
+         <h2 className="font-semibold">Child profiles</h2>
+         <ul className="mt-3 space-y-2">
+diff --git a/lib/comment-risk-heuristics.ts b/lib/comment-risk-heuristics.ts
+new file mode 100644
+index 0000000..0845429
+--- /dev/null
++++ b/lib/comment-risk-heuristics.ts
+@@ -0,0 +1,49 @@
++/**
++ * Catches cruelty that doesn't contain profanity -- "nobody likes this,"
++ * "you're so stupid," "shut up" -- so we can send the small subset of
++ * genuinely ambiguous comments to Gemini for moderation, instead of every
++ * comment. The profanity filter (lib/profanity-filter.ts) should always
++ * run first and reject outright on a match; this only decides whether a
++ * profanity-clean comment still needs a second look.
++ *
++ * Deliberately biased toward over-flagging: false positives cost one
++ * extra Gemini call, false negatives let something unkind through to a
++ * child. When in doubt, flag it.
++ */
++
++const MEAN_PATTERNS = [
++  /\bstupid\b/i,
++  /\bdumb\b/i,
++  /\bugly\b/i,
++  /\bidiot\b/i,
++  /\bloser\b/i,
++  /\bweird(o)?\b/i,
++  /\blame\b/i,
++  /\bsuck(s|ed)?\b/i,
++  /\bhate (you|this|it)\b/i,
++  /\bshut up\b/i,
++  /\bnobody (likes|cares)\b/i,
++  /\bno one (likes|cares)\b/i,
++  /\bboring\b/i,
++  /\bworst\b/i,
++  /\bcringe\b/i,
++];
++
++function hasExcessiveCaps(text: string): boolean {
++  const letters = text.replace(/[^a-zA-Z]/g, "");
++  if (letters.length < 8) return false;
++  const upper = letters.replace(/[^A-Z]/g, "");
++  return upper.length / letters.length > 0.6;
++}
++
++function hasAggressivePunctuation(text: string): boolean {
++  return /[!?]{3,}/.test(text);
++}
++
++export function needsModerationReview(text: string): boolean {
++  return (
++    MEAN_PATTERNS.some((pattern) => pattern.test(text)) ||
++    hasExcessiveCaps(text) ||
++    hasAggressivePunctuation(text)
++  );
++}
+diff --git a/lib/gemini.ts b/lib/gemini.ts
+index d413cb2..ed95a6c 100644
+--- a/lib/gemini.ts
++++ b/lib/gemini.ts
+@@ -1,15 +1,96 @@
++import { createAdminClient } from "@/lib/supabase/admin";
++import { createHash } from "crypto";
++
+ interface GeminiTurn {
+   role: "user" | "model";
+   text: string;
+ }
+ 
++/**
++ * Tier 1 ("lite"/"flash") covers simple, high-volume work: light chat,
++ * quiz/flashcard generation, standard Q&A, recommendations. Tier 2
++ * ("pro") is reserved for genuinely hard reasoning -- multi-step
++ * literary critique, deep analytical writing evaluation. Default to
++ * "lite" everywhere unless a call site has an explicit reason to
++ * upgrade; upgrading is opt-in, not opt-out.
++ */
++export type GeminiTier = "lite" | "flash" | "pro";
++
++const MODEL_BY_TIER: Record<GeminiTier, string> = {
++  lite: "gemini-3.1-flash-lite",
++  flash: "gemini-3.1-flash",
++  pro: "gemini-3.1-pro",
++};
++
++interface CallGeminiOpts {
++  jsonMode?: boolean;
++  /** Defaults to "lite". Only pass "pro" for genuinely complex reasoning. */
++  tier?: GeminiTier;
++  /**
++   * When provided, identical requests reuse a cached response instead of
++   * hitting the API. Build this from the semantically-meaningful inputs
++   * only (e.g. book title + author for a quiz) -- NOT from anything
++   * containing a user id, timestamp, or per-user personalization, or
++   * you'll defeat caching entirely by making every key unique.
++   */
++  cacheKey?: string;
++  /** How long a cached response stays valid. Defaults to 24 hours. */
++  cacheTtlMinutes?: number;
++}
++
++function hashCacheKey(rawKey: string, model: string): string {
++  return createHash("sha256").update(`${model}:${rawKey}`).digest("hex");
++}
++
++async function getCached(hashedKey: string): Promise<string | null> {
++  try {
++    const admin = createAdminClient();
++    const { data } = await admin
++      .from("ai_response_cache")
++      .select("response, expires_at")
++      .eq("cache_key", hashedKey)
++      .maybeSingle();
++
++    if (!data) return null;
++    if (new Date(data.expires_at) < new Date()) return null;
++    return data.response as string;
++  } catch {
++    // Cache is a pure optimization -- never let a cache read failure
++    // block or break the actual Gemini call.
++    return null;
++  }
++}
++
++async function setCached(hashedKey: string, response: string, ttlMinutes: number): Promise<void> {
++  try {
++    const admin = createAdminClient();
++    const expiresAt = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
++    await admin.from("ai_response_cache").upsert({
++      cache_key: hashedKey,
++      response,
++      expires_at: expiresAt,
++    });
++  } catch {
++    // Same as above -- never let a cache write failure surface to the caller.
++  }
++}
++
+ export async function callGemini(
+   systemInstruction: string,
+   turns: GeminiTurn[],
+-  opts?: { jsonMode?: boolean }
++  opts?: CallGeminiOpts
+ ): Promise<string> {
++  const tier = opts?.tier ?? "lite";
++  const model = MODEL_BY_TIER[tier];
++
++  const hashedKey = opts?.cacheKey ? hashCacheKey(opts.cacheKey, model) : null;
++  if (hashedKey) {
++    const cached = await getCached(hashedKey);
++    if (cached !== null) return cached;
++  }
++
+   const res = await fetch(
+-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
++    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+     {
+       method: "POST",
+       headers: {
+@@ -34,9 +115,14 @@ export async function callGemini(
+   const data = await res.json();
+   const text: string | undefined = data.candidates?.[0]?.content?.parts?.[0]?.text;
+   if (!text) throw new Error("Gemini returned no text");
++
++  if (hashedKey) {
++    await setCached(hashedKey, text, opts?.cacheTtlMinutes ?? 60 * 24);
++  }
++
+   return text;
+ }
+ 
+ export function hasGeminiKey() {
+   return Boolean(process.env.GEMINI_API_KEY);
+-}
+\ No newline at end of file
++}
+diff --git a/supabase/migrations/027_ai_cost_optimization.sql b/supabase/migrations/027_ai_cost_optimization.sql
+new file mode 100644
+index 0000000..b13d4c7
+--- /dev/null
++++ b/supabase/migrations/027_ai_cost_optimization.sql
+@@ -0,0 +1,26 @@
++-- Phase 4: AI cost optimization -- response caching + opt-in AI weekly digest.
++
++-- Generic response cache for callGemini(). Keyed by a sha256 hash of
++-- (model + caller-supplied semantic cache key), so callers control what
++-- counts as "the same request" -- e.g. book title + author for a quiz,
++-- deliberately excluding user id or timestamp so repeat requests for the
++-- same book across different kids hit the cache instead of Gemini.
++create table if not exists public.ai_response_cache (
++  cache_key text primary key,
++  response text not null,
++  created_at timestamptz not null default now(),
++  expires_at timestamptz not null
++);
++
++create index if not exists ai_response_cache_expires_at_idx
++  on public.ai_response_cache (expires_at);
++
++-- Service-role only: this table is never read or written directly from
++-- the client, only from lib/gemini.ts via the admin client.
++alter table public.ai_response_cache enable row level security;
++
++-- Parents default to the free, template-only weekly digest. AI summaries
++-- are an explicit opt-in (Parent Settings > "Enhanced AI Weekly Reading
++-- Summary"), so the cron job never spends a Gemini call unless a parent
++-- has asked for it.
++alter table public.users add column if not exists ai_weekly_summary_enabled boolean not null default false;
+-- 
+2.43.0
+

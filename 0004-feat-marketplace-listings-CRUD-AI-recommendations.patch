@@ -1,0 +1,333 @@
+From 19c8ff33273b7280fd4e8e0085cad17cda29719b Mon Sep 17 00:00:00 2001
+From: Book Buddy Handoff <handoff@bookbuddy.local>
+Date: Sun, 9 Aug 2026 01:30:40 +0000
+Subject: [PATCH 4/6] feat(marketplace): listings CRUD + AI recommendations
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+POST/PATCH /api/marketplace/listings — same validation as before, minus
+the seller-verification check (there's no Stripe account to verify in
+this version). RLS still enforces parent/teacher-only + own-row-only.
+
+POST /api/marketplace/recommend — unchanged in spirit from the earlier
+design: grounds Gemini's picks against a real candidate list of active
+listings and filters the response against that same set before
+returning it. Read-only, never implies a purchase or reservation.
+---
+ .../marketplace/listings/[listingId]/route.ts |  93 ++++++++++++++
+ app/api/marketplace/listings/route.ts         |  79 ++++++++++++
+ app/api/marketplace/recommend/route.ts        | 115 ++++++++++++++++++
+ 3 files changed, 287 insertions(+)
+ create mode 100644 app/api/marketplace/listings/[listingId]/route.ts
+ create mode 100644 app/api/marketplace/listings/route.ts
+ create mode 100644 app/api/marketplace/recommend/route.ts
+
+diff --git a/app/api/marketplace/listings/[listingId]/route.ts b/app/api/marketplace/listings/[listingId]/route.ts
+new file mode 100644
+index 0000000..5089169
+--- /dev/null
++++ b/app/api/marketplace/listings/[listingId]/route.ts
+@@ -0,0 +1,93 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { isMarketplaceCategory } from "@/lib/marketplace";
++
++const MAX_PHOTOS = 6;
++
++/**
++ * Edits or (de)activates one of the caller's own listings. RLS
++ * (marketplace_listings_update_own) already restricts this to the seller's
++ * own rows — this route just validates the shape of the update.
++ */
++export async function PATCH(request: Request, { params }: { params: { listingId: string } }) {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) {
++    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++  }
++
++  const body = await request.json();
++  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
++
++  if (body.category !== undefined) {
++    if (!isMarketplaceCategory(body.category)) {
++      return NextResponse.json({ error: "Invalid category." }, { status: 400 });
++    }
++    update.category = body.category;
++  }
++  if (body.title !== undefined) {
++    if (typeof body.title !== "string" || body.title.trim().length === 0 || body.title.length > 140) {
++      return NextResponse.json({ error: "Title is required (up to 140 characters)." }, { status: 400 });
++    }
++    update.title = body.title.trim();
++  }
++  if (body.description !== undefined) {
++    if (typeof body.description !== "string" || body.description.trim().length === 0 || body.description.length > 4000) {
++      return NextResponse.json({ error: "Description is required (up to 4000 characters)." }, { status: 400 });
++    }
++    update.description = body.description.trim();
++  }
++  if (body.priceDollars !== undefined) {
++    const priceCents = Math.round(Number(body.priceDollars) * 100);
++    if (!Number.isFinite(priceCents) || priceCents <= 0) {
++      return NextResponse.json({ error: "Price must be greater than $0." }, { status: 400 });
++    }
++    update.price_cents = priceCents;
++  }
++  if (body.condition !== undefined) {
++    if (body.condition !== null && !["new", "used", "digital", "service"].includes(body.condition)) {
++      return NextResponse.json({ error: "Invalid condition." }, { status: 400 });
++    }
++    update.condition = body.condition;
++  }
++  if (body.quantityAvailable !== undefined) {
++    if (body.quantityAvailable !== null && (!Number.isInteger(body.quantityAvailable) || body.quantityAvailable < 0)) {
++      return NextResponse.json(
++        { error: "Quantity must be a non-negative whole number, or null for unlimited." },
++        { status: 400 }
++      );
++    }
++    update.quantity_available = body.quantityAvailable;
++  }
++  if (body.photoUrls !== undefined) {
++    if (!Array.isArray(body.photoUrls)) {
++      return NextResponse.json({ error: "photoUrls must be an array." }, { status: 400 });
++    }
++    update.photo_urls = body.photoUrls.filter((u: unknown) => typeof u === "string").slice(0, MAX_PHOTOS);
++  }
++  if (body.status !== undefined) {
++    if (!["active", "inactive"].includes(body.status)) {
++      return NextResponse.json({ error: "Invalid status." }, { status: 400 });
++    }
++    update.status = body.status;
++  }
++
++  const { data: listing, error } = await supabase
++    .from("marketplace_listings")
++    .update(update)
++    .eq("id", params.listingId)
++    .eq("seller_id", user.id)
++    .select()
++    .maybeSingle();
++
++  if (error) {
++    return NextResponse.json({ error: error.message }, { status: 500 });
++  }
++  if (!listing) {
++    return NextResponse.json({ error: "Listing not found." }, { status: 404 });
++  }
++
++  return NextResponse.json({ listing });
++}
+diff --git a/app/api/marketplace/listings/route.ts b/app/api/marketplace/listings/route.ts
+new file mode 100644
+index 0000000..b3adf22
+--- /dev/null
++++ b/app/api/marketplace/listings/route.ts
+@@ -0,0 +1,79 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { isMarketplaceCategory } from "@/lib/marketplace";
++
++const MAX_PHOTOS = 6;
++
++/**
++ * Creates a listing for the calling seller. Uses the request-scoped client,
++ * not admin — the marketplace_listings_insert_own RLS policy
++ * (029_marketplace_schema.sql) already restricts this to parent/teacher
++ * accounts listing under their own seller_id; this route just adds
++ * friendlier validation than a raw Postgres error.
++ */
++export async function POST(request: Request) {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) {
++    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++  }
++
++  const { data: profile } = await supabase.from("users").select("role").eq("id", user.id).single();
++  if (!profile || (profile.role !== "parent" && profile.role !== "teacher")) {
++    return NextResponse.json({ error: "Only parent or teacher accounts can sell." }, { status: 403 });
++  }
++
++  const body = await request.json();
++  const { category, title, description, priceDollars, condition, quantityAvailable, photoUrls } = body ?? {};
++
++  if (!isMarketplaceCategory(category)) {
++    return NextResponse.json({ error: "Invalid category." }, { status: 400 });
++  }
++  if (typeof title !== "string" || title.trim().length === 0 || title.length > 140) {
++    return NextResponse.json({ error: "Title is required (up to 140 characters)." }, { status: 400 });
++  }
++  if (typeof description !== "string" || description.trim().length === 0 || description.length > 4000) {
++    return NextResponse.json({ error: "Description is required (up to 4000 characters)." }, { status: 400 });
++  }
++  const priceCents = Math.round(Number(priceDollars) * 100);
++  if (!Number.isFinite(priceCents) || priceCents <= 0) {
++    return NextResponse.json({ error: "Price must be greater than $0." }, { status: 400 });
++  }
++  if (condition !== undefined && condition !== null && !["new", "used", "digital", "service"].includes(condition)) {
++    return NextResponse.json({ error: "Invalid condition." }, { status: 400 });
++  }
++  if (
++    quantityAvailable !== undefined &&
++    quantityAvailable !== null &&
++    (!Number.isInteger(quantityAvailable) || quantityAvailable < 0)
++  ) {
++    return NextResponse.json(
++      { error: "Quantity must be a non-negative whole number, or left blank for unlimited." },
++      { status: 400 }
++    );
++  }
++  const photos = Array.isArray(photoUrls) ? photoUrls.filter((u) => typeof u === "string").slice(0, MAX_PHOTOS) : [];
++
++  const { data: listing, error } = await supabase
++    .from("marketplace_listings")
++    .insert({
++      seller_id: user.id,
++      category,
++      title: title.trim(),
++      description: description.trim(),
++      price_cents: priceCents,
++      condition: condition ?? null,
++      quantity_available: quantityAvailable ?? null,
++      photo_urls: photos,
++    })
++    .select()
++    .single();
++
++  if (error) {
++    return NextResponse.json({ error: error.message }, { status: 500 });
++  }
++
++  return NextResponse.json({ listing });
++}
+diff --git a/app/api/marketplace/recommend/route.ts b/app/api/marketplace/recommend/route.ts
+new file mode 100644
+index 0000000..6f92838
+--- /dev/null
++++ b/app/api/marketplace/recommend/route.ts
+@@ -0,0 +1,115 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { callGemini, hasGeminiKey } from "@/lib/gemini";
++
++const SYSTEM_PROMPT = `You recommend BookBuy Marketplace listings to a parent or teacher based on
++what their kid(s) have read. You will be given the kids' reading interests and a numbered list of
++real candidate listings — you may ONLY recommend listings from that list, never invent new ones.
++Return ONLY valid JSON, no markdown fences, in this exact shape:
++{"recommendations":[{"listingId":"...","why":"one short sentence, under 20 words"}]}
++Recommend at most 5. Fewer than 5 is fine if fewer are a good fit. This is a suggestion feature
++only — never imply anything has been bought, sold, or reserved.`;
++
++const MAX_CANDIDATES = 40;
++
++/**
++ * Read-only, best-effort suggestions. Grounded against real listings: the
++ * model picks from a numbered candidate list rather than generating
++ * recommendations from scratch, and the response is filtered against that
++ * same candidate set before being returned — never trust the model to only
++ * return ids it was given.
++ */
++export async function POST() {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) {
++    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++  }
++
++  const { data: profile } = await supabase.from("users").select("role").eq("id", user.id).single();
++  if (!profile || (profile.role !== "parent" && profile.role !== "teacher")) {
++    return NextResponse.json({ error: "Only parent or teacher accounts can see this." }, { status: 403 });
++  }
++
++  if (!hasGeminiKey()) {
++    return NextResponse.json({ error: "Recommendations aren't set up yet." }, { status: 503 });
++  }
++
++  const kidIds = await getLinkedKidIds(supabase, user.id, profile.role);
++
++  const { data: candidates } = await supabase
++    .from("marketplace_listings")
++    .select("id, category, title, description, price_cents")
++    .eq("status", "active")
++    .order("created_at", { ascending: false })
++    .limit(MAX_CANDIDATES);
++
++  if (!candidates || candidates.length === 0) {
++    return NextResponse.json({ recommendations: [] });
++  }
++
++  let readingSignal = "This parent/teacher's linked kid(s) haven't logged any books yet.";
++  if (kidIds.length > 0) {
++    const { data: shelf } = await supabase
++      .from("user_books")
++      .select("book:books(title, author, genre, age_min, age_max)")
++      .in("user_id", kidIds);
++
++    const lines = (shelf ?? [])
++      .map((r) => {
++        const b = Array.isArray(r.book) ? r.book[0] : r.book;
++        return b ? `"${b.title}" by ${b.author}${b.genre ? ` (${b.genre})` : ""}` : null;
++      })
++      .filter(Boolean);
++
++    if (lines.length > 0) {
++      readingSignal = `The linked kid(s) have read:\n${Array.from(new Set(lines)).slice(0, 30).join("\n")}`;
++    }
++  }
++
++  const candidateList = candidates
++    .map(
++      (c, i) =>
++        `${i + 1}. id=${c.id} | category=${c.category} | "${c.title}" | $${(c.price_cents / 100).toFixed(2)} | ${(c.description ?? "").slice(0, 140)}`
++    )
++    .join("\n");
++
++  const prompt = `${readingSignal}\n\nCandidate marketplace listings:\n${candidateList}\n\nPick the best-fit listings for this family.`;
++
++  try {
++    const cacheKey = `marketplace-recommend:v1:${readingSignal}::${candidates.map((c) => c.id).sort().join(",")}`;
++    const raw = await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }], {
++      jsonMode: true,
++      tier: "lite",
++      cacheKey,
++      cacheTtlMinutes: 60 * 6,
++    });
++
++    const parsed = JSON.parse(raw) as { recommendations?: { listingId?: string; why?: string }[] };
++    const byId = new Map(candidates.map((c) => [c.id, c]));
++
++    const recommendations = (parsed.recommendations ?? [])
++      .filter((r) => r.listingId && byId.has(r.listingId))
++      .slice(0, 5)
++      .map((r) => ({ listing: byId.get(r.listingId!), why: r.why ?? "" }));
++
++    return NextResponse.json({ recommendations });
++  } catch {
++    return NextResponse.json({ error: "Couldn't get recommendations right now." }, { status: 500 });
++  }
++}
++
++async function getLinkedKidIds(
++  supabase: Awaited<ReturnType<typeof createClient>>,
++  userId: string,
++  role: string
++): Promise<string[]> {
++  if (role === "parent") {
++    const { data } = await supabase.from("parent_child").select("child_id").eq("parent_id", userId);
++    return (data ?? []).map((r) => r.child_id);
++  }
++  const { data } = await supabase.from("teacher_student").select("student_id").eq("teacher_id", userId);
++  return (data ?? []).map((r) => r.student_id);
++}
+-- 
+2.43.0
+

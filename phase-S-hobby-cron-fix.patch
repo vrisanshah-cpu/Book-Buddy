@@ -1,0 +1,167 @@
+From bbcc06a19359d0e8c8bae80734f7d7bd9d01faa3 Mon Sep 17 00:00:00 2001
+From: Vrisan <vrisanshah@gmail.com>
+Date: Thu, 6 Aug 2026 05:43:00 +0000
+Subject: [PATCH] phase-S-hobby-cron-fix
+
+Root cause of the failed deploys: send-nudges was scheduled hourly
+(0 * * * * in vercel.json), and Vercel's Hobby plan rejects any cron
+schedule that would fire more than once per day -- that's a build-time
+validation failure, so the whole deployment never went out. (Note:
+the *count* of cron jobs wasn't actually the problem -- Vercel lifted
+the old 2-job Hobby cap to 100 per project in January 2026 -- it was
+specifically this one schedule's frequency.)
+
+Fix does NOT degrade functionality or need an external scheduler.
+Weekend events always start at Saturday 00:00 UTC and end at Sunday
+23:59:59 UTC (see getUpcomingWeekendWindow in lib/weekend-events.ts)
+-- fixed, known-in-advance timestamps, not something that needs
+polling to catch. So instead of one hourly job scanning for events
+'starting/ending within the next hour', send-nudges is now invoked by
+three separate cron entries pointing at the same route (an officially
+documented Vercel pattern -- see x-vercel-cron-schedule), each
+individually well within the once-per-day Hobby limit:
+  - daily,        20:00 UTC ('0 20 * * *')  -- streak-loss warnings
+  - Fridays only, 23:00 UTC ('0 23 * * 5')  -- event starting soon
+  - Sundays only, 23:00 UTC ('0 23 * * 0')  -- event ending soon
+The route itself gates each block on the matching UTC day+hour so the
+three schedules never do overlapping work. Reminder timing precision
+is unchanged from before -- still ~1 hour ahead of the actual
+start/end moment, just scheduled exactly instead of polled.
+
+generate-weekend-event, close-weekend-event, and parent-digest were
+already within the once-per-day limit and are unchanged.
+
+Total cron entries after this fix: 6, well under the new 100/project
+cap on every plan (including Hobby).
+
+Worth knowing, not fixed here: Hobby cron functions have a 10-second
+execution timeout, and close-weekend-event / parent-digest both loop
+sequentially over every kid or parent with several awaited Supabase
+calls each. Fine at current scale; worth watching as the user base
+grows -- if either ever times out mid-run, Pro raises the limit to 60s
+(configurable to 300s) and is the simpler fix at that point.
+---
+ app/api/cron/send-nudges/route.ts | 78 ++++++++++++++++---------------
+ vercel.json                       |  6 ++-
+ 2 files changed, 44 insertions(+), 40 deletions(-)
+
+diff --git a/app/api/cron/send-nudges/route.ts b/app/api/cron/send-nudges/route.ts
+index 47c7fa7..7a3df8d 100644
+--- a/app/api/cron/send-nudges/route.ts
++++ b/app/api/cron/send-nudges/route.ts
+@@ -47,16 +47,28 @@ export async function GET(request: Request) {
+   const { data: kids } = await admin.from("users").select("id, display_name, email").eq("role", "kid");
+   const kidList = (kids ?? []) as KidRow[];
+ 
++  // This route is invoked by three separate Vercel Cron entries (see
++  // vercel.json), each once a day or less -- required on the Hobby plan,
++  // which rejects any schedule that would fire more than once per day.
++  // Each block below is gated to only do real work on its own entry's
++  // exact UTC day+hour, so the three schedules never overlap:
++  //   - streak warnings:      daily,        20:00 UTC  ("0 20 * * *")
++  //   - weekend event starts: Fridays only, 23:00 UTC  ("0 23 * * 5")
++  //   - weekend event ends:   Sundays only, 23:00 UTC  ("0 23 * * 0")
++  // This replaced an hourly poll for events starting/ending "within the
++  // next hour" -- unnecessary, since weekend events always start at
++  // Saturday 00:00 UTC and end at Sunday 23:59:59 UTC (see
++  // getUpcomingWeekendWindow in lib/weekend-events.ts), so the exact
++  // moment to remind at is knowable in advance rather than polled for.
++  const now = new Date();
++  const currentHourUtc = now.getUTCHours();
++  const currentDayUtc = now.getUTCDay(); // 0 = Sunday ... 6 = Saturday
++
+   // ---- Daily streak-loss warnings ----
+-  // This route runs hourly (see vercel.json) so the event-reminder window
+-  // below doesn't miss anything, but a streak warning should only go out
+-  // once a day — so it's gated to a single hour (20:00 UTC, i.e. evening
+-  // for most of the US) rather than every run.
+-  const currentHourUtc = new Date().getUTCHours();
+-  const isStreakWarningHour = currentHourUtc === 20;
+-
+-  if (isStreakWarningHour) {
+-    const todayKey = new Date().toISOString().split("T")[0];
++  const isStreakWarningRun = currentHourUtc === 20;
++
++  if (isStreakWarningRun) {
++    const todayKey = now.toISOString().split("T")[0];
+     const tenDaysAgo = new Date();
+     tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+     const tenDaysAgoKey = tenDaysAgo.toISOString().split("T")[0];
+@@ -83,38 +95,28 @@ export async function GET(request: Request) {
+     }
+   }
+ 
+-  // ---- Weekend event start/end reminders (next hour) ----
+-  const nowIso = new Date().toISOString();
+-  const inOneHourIso = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+-
+-  const { data: startingEvents } = await admin
+-    .from("weekend_events")
+-    .select("id, title")
+-    .eq("status", "upcoming")
+-    .gte("starts_at", nowIso)
+-    .lte("starts_at", inOneHourIso);
+-
+-  const { data: endingEvents } = await admin
+-    .from("weekend_events")
+-    .select("id, title")
+-    .eq("status", "active")
+-    .gte("ends_at", nowIso)
+-    .lte("ends_at", inOneHourIso);
+-
+-  const eventReminders = [
+-    ...(startingEvents ?? []).map((e) => ({ ...e, kind: "starting" as const })),
+-    ...(endingEvents ?? []).map((e) => ({ ...e, kind: "ending" as const })),
+-  ];
+-
+-  for (const ev of eventReminders) {
+-    const payload =
+-      ev.kind === "starting"
++  // ---- Weekend event start reminder (Fridays, ~1hr before Saturday 00:00 UTC start) ----
++  const isEventStartRun = currentDayUtc === 5 && currentHourUtc === 23;
++  // ---- Weekend event end reminder (Sundays, ~1hr before Sunday 23:59:59 UTC end) ----
++  const isEventEndRun = currentDayUtc === 0 && currentHourUtc === 23;
++
++  if (isEventStartRun || isEventEndRun) {
++    const status = isEventStartRun ? "upcoming" : "active";
++    const { data: events } = await admin
++      .from("weekend_events")
++      .select("id, title")
++      .eq("status", status);
++
++    const payload = (ev: { id: string; title: string }) =>
++      isEventStartRun
+         ? { title: `🎉 ${ev.title} starts soon!`, body: "The weekend event begins within the hour — get ready!", url: `/kids/events/${ev.id}` }
+         : { title: `⏰ ${ev.title} ends soon!`, body: "Less than an hour left — log your last books to lock in your rank!", url: `/kids/events/${ev.id}` };
+ 
+-    for (const kid of kidList) {
+-      await notifyKid(admin, kid, payload);
+-      results.eventReminders++;
++    for (const ev of events ?? []) {
++      for (const kid of kidList) {
++        await notifyKid(admin, kid, payload(ev));
++        results.eventReminders++;
++      }
+     }
+   }
+ 
+diff --git a/vercel.json b/vercel.json
+index 6959130..c8f5b1a 100644
+--- a/vercel.json
++++ b/vercel.json
+@@ -2,7 +2,9 @@
+     "crons": [
+       { "path": "/api/cron/generate-weekend-event", "schedule": "0 12 * * *" },
+       { "path": "/api/cron/close-weekend-event", "schedule": "0 13 * * *" },
+-      { "path": "/api/cron/send-nudges", "schedule": "0 * * * *" },
++      { "path": "/api/cron/send-nudges", "schedule": "0 20 * * *" },
++      { "path": "/api/cron/send-nudges", "schedule": "0 23 * * 5" },
++      { "path": "/api/cron/send-nudges", "schedule": "0 23 * * 0" },
+       { "path": "/api/cron/parent-digest", "schedule": "0 9 * * 1" }
+     ]
+-  }
+\ No newline at end of file
++  }
+-- 
+2.43.0
+

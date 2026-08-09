@@ -1,0 +1,691 @@
+diff --git a/app/api/kids/buddy-invite/[id]/respond/route.ts b/app/api/kids/buddy-invite/[id]/respond/route.ts
+new file mode 100644
+index 0000000..b01d709
+--- /dev/null
++++ b/app/api/kids/buddy-invite/[id]/respond/route.ts
+@@ -0,0 +1,35 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++
++export async function POST(request: Request, { params }: { params: { id: string } }) {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++
++  const { action } = await request.json();
++  if (!["accept", "decline", "cancel"].includes(action)) {
++    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
++  }
++
++  if (action === "accept") {
++    const { data: challengeId, error } = await supabase.rpc("accept_buddy_invite", { p_invite_id: params.id });
++    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
++    return NextResponse.json({ ok: true, challengeId });
++  }
++
++  const newStatus = action === "decline" ? "declined" : "cancelled";
++  const matchColumn = action === "decline" ? "to_kid_id" : "from_kid_id";
++
++  const { error } = await supabase
++    .from("buddy_invites")
++    .update({ status: newStatus })
++    .eq("id", params.id)
++    .eq(matchColumn, user.id)
++    .eq("status", "pending");
++
++  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
++
++  return NextResponse.json({ ok: true });
++}
+diff --git a/app/api/kids/buddy-invite/route.ts b/app/api/kids/buddy-invite/route.ts
+new file mode 100644
+index 0000000..11a7b9c
+--- /dev/null
++++ b/app/api/kids/buddy-invite/route.ts
+@@ -0,0 +1,68 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++
++export async function GET() {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++
++  const { data: invites } = await supabase
++    .from("buddy_invites")
++    .select(
++      "id, from_kid_id, to_kid_id, title, description, goal_type, target, ends_at, status, from_kid:users!from_kid_id(id, display_name), to_kid:users!to_kid_id(id, display_name)"
++    )
++    .or(`from_kid_id.eq.${user.id},to_kid_id.eq.${user.id}`)
++    .order("created_at", { ascending: false });
++
++  const { data: pairs } = await supabase
++    .from("buddy_pairs")
++    .select(
++      "id, challenge_id, kid_a_id, kid_b_id, combined_progress, completed_at, challenge:buddy_challenges(id, title, description, goal_type, target, status, starts_at, ends_at), kid_a:users!kid_a_id(id, display_name), kid_b:users!kid_b_id(id, display_name)"
++    )
++    .or(`kid_a_id.eq.${user.id},kid_b_id.eq.${user.id}`);
++
++  return NextResponse.json({ invites: invites ?? [], pairs: pairs ?? [] });
++}
++
++export async function POST(request: Request) {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++
++  const { toKidId, title, description, goalType, target, endsAt } = await request.json();
++
++  if (!toKidId || !title?.trim() || !description?.trim() || !goalType || !target || !endsAt) {
++    return NextResponse.json({ error: "Missing fields" }, { status: 400 });
++  }
++  if (toKidId === user.id) {
++    return NextResponse.json({ error: "You can't buddy up with yourself" }, { status: 400 });
++  }
++  if (!["books_count", "minutes_read"].includes(goalType)) {
++    return NextResponse.json({ error: "Invalid goal type" }, { status: 400 });
++  }
++  if (new Date(endsAt) <= new Date()) {
++    return NextResponse.json({ error: "End date must be in the future" }, { status: 400 });
++  }
++
++  const { data: invite, error } = await supabase
++    .from("buddy_invites")
++    .insert({
++      from_kid_id: user.id,
++      to_kid_id: toKidId,
++      title: title.trim(),
++      description: description.trim(),
++      goal_type: goalType,
++      target: Number(target),
++      ends_at: endsAt,
++    })
++    .select()
++    .single();
++
++  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
++
++  return NextResponse.json({ invite });
++}
+diff --git a/app/api/reading/log/route.ts b/app/api/reading/log/route.ts
+index b284c27..f890a52 100644
+--- a/app/api/reading/log/route.ts
++++ b/app/api/reading/log/route.ts
+@@ -1,6 +1,6 @@
+ import { NextResponse } from "next/server";
+ import { createClient } from "@/lib/supabase/server";
+-import { awardXp, syncChallengeProgress } from "@/lib/challenges";
++import { awardXp, syncChallengeProgress, syncBuddyProgressForKid } from "@/lib/challenges";
+ import { XP_REWARDS } from "@/lib/xp";
+ import { calculateStreak } from "@/lib/reading-stats";
+ import { syncActiveEventProgress } from "@/lib/weekend-events";
+@@ -69,7 +69,11 @@ export async function POST(request: Request) {
+     // can never block the XP/streak/challenge results the kid is already
+     // waiting on.
+     const [, cardResult] = await Promise.all([
+-      Promise.all([syncActiveEventProgress(supabase, user.id), syncActiveClassroomEventProgress(supabase, user.id)]),
++      Promise.all([
++        syncActiveEventProgress(supabase, user.id),
++        syncActiveClassroomEventProgress(supabase, user.id),
++        syncBuddyProgressForKid(user.id),
++      ]),
+       (async () => {
+         try {
+           // "Boosted" = any weekend event is currently running, not
+diff --git a/app/kids/buddy/page.tsx b/app/kids/buddy/page.tsx
+new file mode 100644
+index 0000000..1995a63
+--- /dev/null
++++ b/app/kids/buddy/page.tsx
+@@ -0,0 +1,34 @@
++import { redirect } from "next/navigation";
++import { getProfile, createClient } from "@/lib/supabase/server";
++import { BuddyClient } from "@/components/kids/BuddyClient";
++
++export default async function BuddyPage() {
++  const { user } = await getProfile();
++  if (!user) redirect("/auth/login");
++
++  const supabase = await createClient();
++
++  const { data: myClassrooms } = await supabase
++    .from("teacher_student")
++    .select("classroom_id")
++    .eq("student_id", user.id)
++    .not("classroom_id", "is", null);
++  const classroomIds = (myClassrooms ?? []).map((c) => c.classroom_id).filter(Boolean);
++
++  let classmates: { id: string; display_name: string }[] = [];
++  if (classroomIds.length > 0) {
++    const { data: rows } = await supabase
++      .from("teacher_student")
++      .select("student:users!student_id(id, display_name)")
++      .in("classroom_id", classroomIds)
++      .neq("student_id", user.id);
++    const seen = new Map<string, { id: string; display_name: string }>();
++    for (const r of rows ?? []) {
++      const s = Array.isArray(r.student) ? r.student[0] : r.student;
++      if (s) seen.set(s.id, s);
++    }
++    classmates = Array.from(seen.values());
++  }
++
++  return <BuddyClient currentUserId={user.id} classmates={classmates} />;
++}
+diff --git a/components/kids/BuddyClient.tsx b/components/kids/BuddyClient.tsx
+new file mode 100644
+index 0000000..6a8e758
+--- /dev/null
++++ b/components/kids/BuddyClient.tsx
+@@ -0,0 +1,263 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { Button } from "@/components/ui/Button";
++import { Input } from "@/components/ui/Input";
++
++type GoalType = "books_count" | "minutes_read";
++
++interface KidRef {
++  id: string;
++  display_name: string;
++}
++interface Invite {
++  id: string;
++  from_kid_id: string;
++  to_kid_id: string;
++  title: string;
++  description: string;
++  goal_type: GoalType;
++  target: number;
++  ends_at: string;
++  status: "pending" | "accepted" | "declined" | "cancelled";
++  from_kid: KidRef | null;
++  to_kid: KidRef | null;
++}
++interface BuddyChallenge {
++  id: string;
++  title: string;
++  description: string;
++  goal_type: GoalType;
++  target: number;
++  status: "active" | "completed" | "expired";
++  ends_at: string;
++}
++interface Pair {
++  id: string;
++  challenge_id: string;
++  kid_a_id: string;
++  kid_b_id: string;
++  combined_progress: number;
++  completed_at: string | null;
++  challenge: BuddyChallenge | null;
++  kid_a: KidRef | null;
++  kid_b: KidRef | null;
++}
++
++const GOAL_LABEL: Record<GoalType, string> = {
++  books_count: "books finished (combined)",
++  minutes_read: "minutes read (combined)",
++};
++
++export function BuddyClient({ currentUserId, classmates }: { currentUserId: string; classmates: KidRef[] }) {
++  const [invites, setInvites] = useState<Invite[]>([]);
++  const [pairs, setPairs] = useState<Pair[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [busyId, setBusyId] = useState<string | null>(null);
++  const [error, setError] = useState("");
++
++  const [toKidId, setToKidId] = useState(classmates[0]?.id ?? "");
++  const [title, setTitle] = useState("");
++  const [description, setDescription] = useState("");
++  const [goalType, setGoalType] = useState<GoalType>("books_count");
++  const [target, setTarget] = useState("6");
++  const [endsAt, setEndsAt] = useState("");
++
++  useEffect(() => {
++    void load();
++  }, []);
++
++  async function load() {
++    setLoading(true);
++    const res = await fetch("/api/kids/buddy-invite");
++    const data = await res.json().catch(() => ({}));
++    if (res.ok) {
++      setInvites(data.invites ?? []);
++      setPairs(data.pairs ?? []);
++    }
++    setLoading(false);
++  }
++
++  async function sendInvite() {
++    setError("");
++    if (!toKidId || !title.trim() || !description.trim() || !endsAt) {
++      setError("Fill in every field.");
++      return;
++    }
++    const res = await fetch("/api/kids/buddy-invite", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        toKidId,
++        title: title.trim(),
++        description: description.trim(),
++        goalType,
++        target: Number(target),
++        endsAt: new Date(endsAt).toISOString(),
++      }),
++    });
++    const data = await res.json().catch(() => ({}));
++    if (!res.ok) {
++      setError(data.error ?? "Couldn't send that invite.");
++      return;
++    }
++    setTitle("");
++    setDescription("");
++    setEndsAt("");
++    await load();
++  }
++
++  async function respond(inviteId: string, action: "accept" | "decline" | "cancel") {
++    setError("");
++    setBusyId(inviteId);
++    const res = await fetch(`/api/kids/buddy-invite/${inviteId}/respond`, {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({ action }),
++    });
++    const data = await res.json().catch(() => ({}));
++    setBusyId(null);
++    if (!res.ok) {
++      setError(data.error ?? "Couldn't do that.");
++      return;
++    }
++    await load();
++  }
++
++  const pendingInvites = invites.filter((i) => i.status === "pending");
++
++  return (
++    <div>
++      <h1 className="font-kids-display text-2xl font-bold text-slate-900">Buddy Reading</h1>
++      <p className="mt-1 text-slate-500">Team up with a classmate on a shared reading goal.</p>
++
++      {classmates.length === 0 ? (
++        <p className="mt-6 rounded-xl bg-white p-4 text-sm text-slate-500 shadow-sm">
++          You&apos;ll need a classmate linked to start a buddy challenge.
++        </p>
++      ) : (
++        <div className="mt-6 rounded-2xl bg-white p-4 shadow-md">
++          <h2 className="font-semibold text-slate-900">Invite a buddy</h2>
++          <div className="mt-3 grid gap-3 sm:grid-cols-2">
++            <select
++              value={toKidId}
++              onChange={(e) => setToKidId(e.target.value)}
++              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2"
++            >
++              {classmates.map((c) => (
++                <option key={c.id} value={c.id}>
++                  {c.display_name}
++                </option>
++              ))}
++            </select>
++            <select
++              value={goalType}
++              onChange={(e) => setGoalType(e.target.value as GoalType)}
++              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2"
++            >
++              <option value="books_count">Finish books together</option>
++              <option value="minutes_read">Read minutes together</option>
++            </select>
++            <Input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
++            <Input
++              type="number"
++              min={1}
++              placeholder={`Target ${GOAL_LABEL[goalType]}`}
++              value={target}
++              onChange={(e) => setTarget(e.target.value)}
++            />
++            <Input
++              className="sm:col-span-2"
++              placeholder="Description"
++              value={description}
++              onChange={(e) => setDescription(e.target.value)}
++            />
++            <label className="text-sm text-slate-600 sm:col-span-2">
++              Ends
++              <input
++                type="date"
++                value={endsAt}
++                onChange={(e) => setEndsAt(e.target.value)}
++                className="mt-1 block w-full rounded-xl border border-slate-200 px-4 py-2.5 outline-none focus:border-violet-400 focus:ring-2"
++              />
++            </label>
++          </div>
++          {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
++          <Button variant="kids" className="mt-3" onClick={sendInvite}>
++            Send invite
++          </Button>
++        </div>
++      )}
++
++      {!loading && pendingInvites.length > 0 && (
++        <div className="mt-6 space-y-2">
++          <h2 className="font-semibold text-slate-900">Invites</h2>
++          {pendingInvites.map((inv) => {
++            const isIncoming = inv.to_kid_id === currentUserId;
++            const busy = busyId === inv.id;
++            return (
++              <div key={inv.id} className="rounded-xl bg-white p-4 shadow-sm">
++                <p className="text-sm text-slate-700">
++                  <span className="font-semibold">{inv.title}</span> —{" "}
++                  {isIncoming ? `from ${inv.from_kid?.display_name}` : `to ${inv.to_kid?.display_name}`}: reach{" "}
++                  {inv.target} {GOAL_LABEL[inv.goal_type]}
++                </p>
++                <p className="text-xs text-slate-500">{inv.description}</p>
++                <div className="mt-2 flex gap-2">
++                  {isIncoming ? (
++                    <>
++                      <button disabled={busy} onClick={() => respond(inv.id, "accept")} className="text-xs font-semibold text-emerald-600 hover:text-emerald-800">
++                        Accept
++                      </button>
++                      <button disabled={busy} onClick={() => respond(inv.id, "decline")} className="text-xs font-semibold text-red-500 hover:text-red-700">
++                        Decline
++                      </button>
++                    </>
++                  ) : (
++                    <button disabled={busy} onClick={() => respond(inv.id, "cancel")} className="text-xs font-semibold text-slate-400 hover:text-slate-600">
++                      Cancel
++                    </button>
++                  )}
++                </div>
++              </div>
++            );
++          })}
++        </div>
++      )}
++
++      <div className="mt-6 space-y-3">
++        <h2 className="font-semibold text-slate-900">Your challenges</h2>
++        {loading && <p className="text-sm text-slate-400">Loading…</p>}
++        {!loading && pairs.length === 0 && <p className="text-sm text-slate-400">No buddy challenges yet.</p>}
++        {pairs.map((p) => {
++          const buddy = p.kid_a_id === currentUserId ? p.kid_b : p.kid_a;
++          const target = p.challenge?.target ?? 1;
++          const pct = Math.min(100, Math.round((p.combined_progress / target) * 100));
++          return (
++            <div key={p.id} className="rounded-2xl bg-white p-4 shadow-md">
++              <div className="flex items-center justify-between">
++                <p className="font-semibold text-slate-900">
++                  {p.challenge?.title} <span className="font-normal text-slate-500">with {buddy?.display_name}</span>
++                </p>
++                {p.completed_at && <span className="text-xs font-bold text-emerald-600">🎉 Complete! +150 XP each</span>}
++              </div>
++              <div
++                className="mt-2 h-3 overflow-hidden rounded-full bg-violet-100"
++                role="progressbar"
++                aria-label={`${p.challenge?.title} joint progress`}
++                aria-valuenow={pct}
++                aria-valuemin={0}
++                aria-valuemax={100}
++              >
++                <div className="h-full rounded-full bg-kids-purple" style={{ width: `${pct}%` }} />
++              </div>
++              <p className="mt-1 text-xs text-slate-500">
++                {p.combined_progress} / {target} {p.challenge && GOAL_LABEL[p.challenge.goal_type]}
++              </p>
++            </div>
++          );
++        })}
++      </div>
++    </div>
++  );
++}
+diff --git a/components/kids/KidsNav.tsx b/components/kids/KidsNav.tsx
+index 4011e5b..6ca9409 100644
+--- a/components/kids/KidsNav.tsx
++++ b/components/kids/KidsNav.tsx
+@@ -24,6 +24,7 @@ const moreLinks = [
+   { href: "/kids/pip-chat", label: "Pip", emoji: "🦉" },
+   { href: "/kids/shop", label: "Shop", emoji: "🛍️" },
+   { href: "/kids/trades", label: "Trades", emoji: "🔄" },
++  { href: "/kids/buddy", label: "Buddy Reading", emoji: "🤝" },
+   { href: "/kids/messages", label: "Messages", emoji: "💬" },
+   { href: "/kids/settings", label: "Settings", emoji: "⚙️" },
+ ];
+diff --git a/lib/challenges.ts b/lib/challenges.ts
+index e79d8ae..324535c 100644
+--- a/lib/challenges.ts
++++ b/lib/challenges.ts
+@@ -214,4 +214,80 @@ export async function enrollInAvailableChallenges(
+       }))
+     );
+   }
++}
++
++type BuddyGoalType = "books_count" | "minutes_read";
++
++async function scoreKidForBuddyGoal(
++  admin: SupabaseClient,
++  kidId: string,
++  goalType: BuddyGoalType,
++  startsAt: string,
++  endsAt: string
++): Promise<number> {
++  if (goalType === "books_count") {
++    const { count } = await admin
++      .from("user_books")
++      .select("id", { count: "exact", head: true })
++      .eq("user_id", kidId)
++      .eq("status", "finished")
++      .gte("finished_at", startsAt)
++      .lte("finished_at", endsAt);
++    return count ?? 0;
++  }
++
++  const { data } = await admin
++    .from("reading_sessions")
++    .select("minutes_read")
++    .eq("user_id", kidId)
++    .gte("date", startsAt.slice(0, 10))
++    .lte("date", endsAt.slice(0, 10));
++  return (data ?? []).reduce((sum, r) => sum + (r.minutes_read ?? 0), 0);
++}
++
++/**
++ * Called after a kid logs a reading session (app/api/reading/log) — for
++ * every active buddy pair they're in, re-scores BOTH kids (always via the
++ * admin client: a kid's own session can never read a buddy's private
++ * reading data, by design) and awards a shared XP bonus to both the
++ * moment combined_progress reaches the target.
++ */
++export async function syncBuddyProgressForKid(kidId: string): Promise<void> {
++  const admin = createAdminClient();
++  const nowIso = new Date().toISOString();
++
++  const { data: pairs } = await admin
++    .from("buddy_pairs")
++    .select(
++      "id, challenge_id, kid_a_id, kid_b_id, completed_at, challenge:buddy_challenges(id, goal_type, target, status, starts_at, ends_at)"
++    )
++    .or(`kid_a_id.eq.${kidId},kid_b_id.eq.${kidId}`);
++
++  for (const pair of pairs ?? []) {
++    const challenge = Array.isArray(pair.challenge) ? pair.challenge[0] : pair.challenge;
++    if (!challenge || challenge.status !== "active" || pair.completed_at) continue;
++
++    if (challenge.ends_at <= nowIso) {
++      await admin.from("buddy_challenges").update({ status: "expired" }).eq("id", challenge.id);
++      continue;
++    }
++
++    const [scoreA, scoreB] = await Promise.all([
++      scoreKidForBuddyGoal(admin, pair.kid_a_id, challenge.goal_type, challenge.starts_at, challenge.ends_at),
++      scoreKidForBuddyGoal(admin, pair.kid_b_id, challenge.goal_type, challenge.starts_at, challenge.ends_at),
++    ]);
++    const combined = scoreA + scoreB;
++    const justCompleted = combined >= challenge.target;
++
++    await admin
++      .from("buddy_pairs")
++      .update({ combined_progress: combined, completed_at: justCompleted ? nowIso : null })
++      .eq("id", pair.id);
++
++    if (justCompleted) {
++      await admin.from("buddy_challenges").update({ status: "completed" }).eq("id", challenge.id);
++      await awardXp(admin, pair.kid_a_id, XP_REWARDS.buddy_challenge_complete);
++      await awardXp(admin, pair.kid_b_id, XP_REWARDS.buddy_challenge_complete);
++    }
++  }
+ }
+\ No newline at end of file
+diff --git a/lib/xp.ts b/lib/xp.ts
+index edeb7a8..bc8b4d7 100644
+--- a/lib/xp.ts
++++ b/lib/xp.ts
+@@ -5,6 +5,7 @@ export const XP_REWARDS = {
+   perfect_quiz: 75,
+   booktok_post: 15,
+   streak_7: 200,
++  buddy_challenge_complete: 150,
+ } as const;
+ 
+ export function getLevel(xp: number) {
+diff --git a/supabase/migrations/021_buddy_reading.sql b/supabase/migrations/021_buddy_reading.sql
+new file mode 100644
+index 0000000..7cd6ff7
+--- /dev/null
++++ b/supabase/migrations/021_buddy_reading.sql
+@@ -0,0 +1,126 @@
++-- Phase I: buddy reading — 2-person co-op challenges between classmates.
++-- An invite carries the full proposal; accepting it atomically creates
++-- the buddy_challenges + buddy_pairs rows (accept_buddy_invite below),
++-- since that write spans both kids and can't happen under the invitee's
++-- own RLS alone. Combined progress needs to read BOTH kids' reading data,
++-- which a kid's own session can never do (no such RLS policy exists, by
++-- design) — so it's synced with the admin client from
++-- lib/challenges.ts (syncBuddyProgressForKid), not client-side.
++
++create table if not exists public.buddy_challenges (
++  id uuid primary key default gen_random_uuid(),
++  title text not null,
++  description text not null,
++  goal_type text not null check (goal_type in ('books_count', 'minutes_read')),
++  target int not null check (target > 0),
++  status text not null default 'active' check (status in ('active', 'completed', 'expired')),
++  starts_at timestamptz not null default now(),
++  ends_at timestamptz not null
++);
++
++create table if not exists public.buddy_pairs (
++  id uuid primary key default gen_random_uuid(),
++  challenge_id uuid not null references public.buddy_challenges(id) on delete cascade,
++  kid_a_id uuid not null references public.users(id) on delete cascade,
++  kid_b_id uuid not null references public.users(id) on delete cascade,
++  combined_progress int not null default 0,
++  completed_at timestamptz,
++  constraint buddy_pairs_distinct_kids check (kid_a_id <> kid_b_id),
++  unique (challenge_id)
++);
++
++create table if not exists public.buddy_invites (
++  id uuid primary key default gen_random_uuid(),
++  from_kid_id uuid not null references public.users(id) on delete cascade,
++  to_kid_id uuid not null references public.users(id) on delete cascade,
++  title text not null,
++  description text not null,
++  goal_type text not null check (goal_type in ('books_count', 'minutes_read')),
++  target int not null check (target > 0),
++  ends_at timestamptz not null,
++  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined', 'cancelled')),
++  resulting_challenge_id uuid references public.buddy_challenges(id),
++  created_at timestamptz not null default now(),
++  constraint buddy_invites_distinct_kids check (from_kid_id <> to_kid_id)
++);
++
++create index if not exists buddy_pairs_kid_a_idx on public.buddy_pairs (kid_a_id);
++create index if not exists buddy_pairs_kid_b_idx on public.buddy_pairs (kid_b_id);
++create index if not exists buddy_invites_to_kid_idx on public.buddy_invites (to_kid_id);
++create index if not exists buddy_invites_from_kid_idx on public.buddy_invites (from_kid_id);
++
++alter table public.buddy_challenges enable row level security;
++alter table public.buddy_pairs enable row level security;
++alter table public.buddy_invites enable row level security;
++
++drop policy if exists "buddy_challenges_select" on public.buddy_challenges;
++create policy "buddy_challenges_select" on public.buddy_challenges for select
++  using (
++    exists (
++      select 1 from public.buddy_pairs bp
++      where bp.challenge_id = buddy_challenges.id
++        and (bp.kid_a_id = auth.uid() or bp.kid_b_id = auth.uid())
++    )
++  );
++
++drop policy if exists "buddy_pairs_select" on public.buddy_pairs;
++create policy "buddy_pairs_select" on public.buddy_pairs for select
++  using (kid_a_id = auth.uid() or kid_b_id = auth.uid());
++
++drop policy if exists "buddy_invites_select" on public.buddy_invites;
++create policy "buddy_invites_select" on public.buddy_invites for select
++  using (from_kid_id = auth.uid() or to_kid_id = auth.uid());
++
++drop policy if exists "buddy_invites_insert_own" on public.buddy_invites;
++create policy "buddy_invites_insert_own" on public.buddy_invites for insert
++  with check (from_kid_id = auth.uid());
++
++drop policy if exists "buddy_invites_cancel_own" on public.buddy_invites;
++create policy "buddy_invites_cancel_own" on public.buddy_invites for update
++  using (from_kid_id = auth.uid() and status = 'pending')
++  with check (status = 'cancelled');
++
++drop policy if exists "buddy_invites_decline_own" on public.buddy_invites;
++create policy "buddy_invites_decline_own" on public.buddy_invites for update
++  using (to_kid_id = auth.uid() and status = 'pending')
++  with check (status = 'declined');
++
++-- Accepting goes through this function (not a raw RLS update to
++-- 'accepted') because it also has to create the buddy_challenges +
++-- buddy_pairs rows in the same transaction.
++create or replace function public.accept_buddy_invite(p_invite_id uuid)
++returns uuid
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_invite record;
++  v_challenge_id uuid;
++begin
++  select * into v_invite from public.buddy_invites where id = p_invite_id for update;
++
++  if v_invite is null then
++    raise exception 'Invite not found';
++  end if;
++  if v_invite.status <> 'pending' then
++    raise exception 'This invite is no longer pending';
++  end if;
++  if v_invite.to_kid_id <> auth.uid() then
++    raise exception 'Only the invited kid can accept this';
++  end if;
++
++  insert into public.buddy_challenges (title, description, goal_type, target, ends_at)
++  values (v_invite.title, v_invite.description, v_invite.goal_type, v_invite.target, v_invite.ends_at)
++  returning id into v_challenge_id;
++
++  insert into public.buddy_pairs (challenge_id, kid_a_id, kid_b_id)
++  values (v_challenge_id, v_invite.from_kid_id, v_invite.to_kid_id);
++
++  update public.buddy_invites set status = 'accepted', resulting_challenge_id = v_challenge_id where id = p_invite_id;
++
++  return v_challenge_id;
++end;
++$$;
++
++grant execute on function public.accept_buddy_invite(uuid) to authenticated;

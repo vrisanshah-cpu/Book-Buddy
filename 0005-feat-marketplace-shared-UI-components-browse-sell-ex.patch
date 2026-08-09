@@ -1,0 +1,834 @@
+From 2dcee4b6d796cfef00bd18f10b78fe7bc8061a6e Mon Sep 17 00:00:00 2001
+From: Book Buddy Handoff <handoff@bookbuddy.local>
+Date: Sun, 9 Aug 2026 01:32:24 +0000
+Subject: [PATCH 5/6] feat(marketplace): shared UI components (browse, sell,
+ express interest)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Client components under components/marketplace/, each doing its own
+RLS-scoped data fetching via lib/supabase/client — same pattern as
+MessagesInbox:
+
+- BrowseListings / ListingCard / CategoryBadge / RecommendedListings
+- ListingForm (create + edit, uploads photos to the
+  marketplace-listing-photos Storage bucket) / MyListingsPanel
+- ListingDetail — the key change from the earlier design: instead of a
+  buy/checkout flow, a non-owner sees an 'Express interest' box that
+  calls the existing create_conversation() RPC and posts an opening
+  message, then points them at the normal Messages inbox to work out
+  payment and delivery themselves.
+- MarketplaceSubNav — now just Browse / Sell (no Orders tab, no
+  seller-action badge — there's nothing for a seller to 'act on' until
+  payments exist).
+---
+ components/marketplace/BrowseListings.tsx     |  88 ++++++
+ components/marketplace/CategoryBadge.tsx      |   9 +
+ components/marketplace/ListingCard.tsx        |  43 +++
+ components/marketplace/ListingDetail.tsx      | 156 +++++++++++
+ components/marketplace/ListingForm.tsx        | 264 ++++++++++++++++++
+ components/marketplace/MarketplaceSubNav.tsx  |  39 +++
+ components/marketplace/MyListingsPanel.tsx    |  85 ++++++
+ .../marketplace/RecommendedListings.tsx       |  56 ++++
+ 8 files changed, 740 insertions(+)
+ create mode 100644 components/marketplace/BrowseListings.tsx
+ create mode 100644 components/marketplace/CategoryBadge.tsx
+ create mode 100644 components/marketplace/ListingCard.tsx
+ create mode 100644 components/marketplace/ListingDetail.tsx
+ create mode 100644 components/marketplace/ListingForm.tsx
+ create mode 100644 components/marketplace/MarketplaceSubNav.tsx
+ create mode 100644 components/marketplace/MyListingsPanel.tsx
+ create mode 100644 components/marketplace/RecommendedListings.tsx
+
+diff --git a/components/marketplace/BrowseListings.tsx b/components/marketplace/BrowseListings.tsx
+new file mode 100644
+index 0000000..d4a0d98
+--- /dev/null
++++ b/components/marketplace/BrowseListings.tsx
+@@ -0,0 +1,88 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { createClient } from "@/lib/supabase/client";
++import { ListingCard } from "./ListingCard";
++import { RecommendedListings } from "./RecommendedListings";
++import { MARKETPLACE_CATEGORIES, CATEGORY_LABELS, type MarketplaceCategory } from "@/lib/marketplace";
++
++interface Listing {
++  id: string;
++  title: string;
++  category: MarketplaceCategory;
++  price_cents: number;
++  photo_urls: string[];
++}
++
++/** Category filter + search are plain client-side state (not URL params) —
++ * the marketplace is expected to be small enough for this MVP that a
++ * single fetch + local filter is simpler than wiring up server-side
++ * pagination and shareable filter URLs. */
++export function BrowseListings({ role }: { role: "parent" | "teacher" }) {
++  const [listings, setListings] = useState<Listing[] | null>(null);
++  const [category, setCategory] = useState<MarketplaceCategory | "all">("all");
++  const [query, setQuery] = useState("");
++
++  useEffect(() => {
++    const supabase = createClient();
++    supabase
++      .from("marketplace_listings")
++      .select("id, title, category, price_cents, photo_urls")
++      .eq("status", "active")
++      .order("created_at", { ascending: false })
++      .then(({ data }) => setListings(data ?? []));
++  }, []);
++
++  const filtered = (listings ?? []).filter((l) => {
++    if (category !== "all" && l.category !== category) return false;
++    if (query && !l.title.toLowerCase().includes(query.toLowerCase())) return false;
++    return true;
++  });
++
++  return (
++    <div>
++      <RecommendedListings role={role} />
++
++      <div className="mb-4 flex flex-wrap items-center gap-2">
++        <input
++          type="text"
++          value={query}
++          onChange={(e) => setQuery(e.target.value)}
++          placeholder="Search listings…"
++          className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
++        />
++        <button
++          onClick={() => setCategory("all")}
++          className={`rounded-full px-3 py-1.5 text-xs font-medium ${
++            category === "all" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
++          }`}
++        >
++          All
++        </button>
++        {MARKETPLACE_CATEGORIES.map((c) => (
++          <button
++            key={c}
++            onClick={() => setCategory(c)}
++            className={`rounded-full px-3 py-1.5 text-xs font-medium ${
++              category === c ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
++            }`}
++          >
++            {CATEGORY_LABELS[c]}
++          </button>
++        ))}
++      </div>
++
++      {listings === null ? (
++        <p className="text-sm text-slate-500">Loading listings…</p>
++      ) : filtered.length === 0 ? (
++        <p className="text-sm text-slate-500">No listings match yet — check back soon.</p>
++      ) : (
++        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
++          {filtered.map((l) => (
++            <ListingCard key={l.id} listing={l} role={role} />
++          ))}
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/components/marketplace/CategoryBadge.tsx b/components/marketplace/CategoryBadge.tsx
+new file mode 100644
+index 0000000..d80d22f
+--- /dev/null
++++ b/components/marketplace/CategoryBadge.tsx
+@@ -0,0 +1,9 @@
++import { CATEGORY_LABELS, type MarketplaceCategory } from "@/lib/marketplace";
++
++export function CategoryBadge({ category }: { category: MarketplaceCategory }) {
++  return (
++    <span className="inline-block rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
++      {CATEGORY_LABELS[category]}
++    </span>
++  );
++}
+diff --git a/components/marketplace/ListingCard.tsx b/components/marketplace/ListingCard.tsx
+new file mode 100644
+index 0000000..e1661a1
+--- /dev/null
++++ b/components/marketplace/ListingCard.tsx
+@@ -0,0 +1,43 @@
++import Link from "next/link";
++import Image from "next/image";
++import { CategoryBadge } from "./CategoryBadge";
++import { formatPriceCents, type MarketplaceCategory } from "@/lib/marketplace";
++
++interface ListingCardListing {
++  id: string;
++  title: string;
++  category: MarketplaceCategory;
++  price_cents: number;
++  photo_urls: string[];
++}
++
++export function ListingCard({
++  listing,
++  role,
++  why,
++}: {
++  listing: ListingCardListing;
++  role: "parent" | "teacher";
++  why?: string;
++}) {
++  return (
++    <Link
++      href={`/${role}/marketplace/listing/${listing.id}`}
++      className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white transition hover:shadow-md"
++    >
++      <div className="relative aspect-[4/3] w-full bg-slate-100">
++        {listing.photo_urls[0] ? (
++          <Image src={listing.photo_urls[0]} alt={listing.title} fill className="object-cover" />
++        ) : (
++          <div className="flex h-full items-center justify-center text-3xl">📦</div>
++        )}
++      </div>
++      <div className="flex flex-1 flex-col gap-1.5 p-3">
++        <CategoryBadge category={listing.category} />
++        <p className="line-clamp-2 text-sm font-semibold text-slate-900">{listing.title}</p>
++        <p className="mt-auto text-base font-bold text-slate-900">{formatPriceCents(listing.price_cents)}</p>
++        {why && <p className="text-xs italic text-slate-500">{why}</p>}
++      </div>
++    </Link>
++  );
++}
+diff --git a/components/marketplace/ListingDetail.tsx b/components/marketplace/ListingDetail.tsx
+new file mode 100644
+index 0000000..e57384c
+--- /dev/null
++++ b/components/marketplace/ListingDetail.tsx
+@@ -0,0 +1,156 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import Link from "next/link";
++import Image from "next/image";
++import { createClient } from "@/lib/supabase/client";
++import { Button } from "@/components/ui/Button";
++import { CategoryBadge } from "./CategoryBadge";
++import { formatPriceCents, CONDITION_LABELS, type MarketplaceCategory, type ListingCondition } from "@/lib/marketplace";
++
++interface Listing {
++  id: string;
++  seller_id: string;
++  category: MarketplaceCategory;
++  title: string;
++  description: string;
++  price_cents: number;
++  condition: ListingCondition | null;
++  quantity_available: number | null;
++  photo_urls: string[];
++  status: "active" | "inactive";
++}
++
++/**
++ * No payments happen through Book Buddy yet — "Buy now" is "Express
++ * interest," which opens a normal conversation with the seller (the
++ * existing create_conversation() RPC from 019_messaging.sql, which already
++ * dedupes to an existing thread and enforces at least one parent/teacher
++ * participant) so the two of them arrange payment and delivery themselves.
++ */
++export function ListingDetail({ listingId, role }: { listingId: string; role: "parent" | "teacher" }) {
++  const [listing, setListing] = useState<Listing | null | undefined>(undefined);
++  const [viewerId, setViewerId] = useState<string | null>(null);
++  const [message, setMessage] = useState("");
++  const [sending, setSending] = useState(false);
++  const [sent, setSent] = useState(false);
++  const [error, setError] = useState("");
++
++  useEffect(() => {
++    const supabase = createClient();
++    (async () => {
++      const {
++        data: { user },
++      } = await supabase.auth.getUser();
++      setViewerId(user?.id ?? null);
++      const { data } = await supabase.from("marketplace_listings").select("*").eq("id", listingId).maybeSingle();
++      setListing(data);
++      if (data) {
++        setMessage(`Hi! I'm interested in "${data.title}" (${formatPriceCents(data.price_cents)}). Is it still available?`);
++      }
++    })();
++  }, [listingId]);
++
++  async function expressInterest() {
++    if (!listing || !viewerId) return;
++    setSending(true);
++    setError("");
++    try {
++      const supabase = createClient();
++      const { data: conversationId, error: rpcError } = await supabase.rpc("create_conversation", {
++        p_participant_ids: [viewerId, listing.seller_id],
++      });
++      if (rpcError) throw rpcError;
++
++      const { error: messageError } = await supabase
++        .from("messages")
++        .insert({ conversation_id: conversationId, sender_id: viewerId, body: message.trim() });
++      if (messageError) throw messageError;
++
++      setSent(true);
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Could not send your message.");
++    } finally {
++      setSending(false);
++    }
++  }
++
++  if (listing === undefined) return <p className="text-sm text-slate-500">Loading…</p>;
++  if (!listing) return <p className="text-sm text-slate-500">This listing isn&apos;t available.</p>;
++
++  const isOwnListing = viewerId === listing.seller_id;
++
++  return (
++    <div className="grid gap-8 lg:grid-cols-2">
++      <div>
++        <div className="relative aspect-square w-full overflow-hidden rounded-2xl bg-slate-100">
++          {listing.photo_urls[0] ? (
++            <Image src={listing.photo_urls[0]} alt={listing.title} fill className="object-cover" />
++          ) : (
++            <div className="flex h-full items-center justify-center text-5xl">📦</div>
++          )}
++        </div>
++        {listing.photo_urls.length > 1 && (
++          <div className="mt-2 flex gap-2">
++            {listing.photo_urls.slice(1).map((url) => (
++              <div key={url} className="relative h-16 w-16 overflow-hidden rounded-lg bg-slate-100">
++                <Image src={url} alt="" fill className="object-cover" />
++              </div>
++            ))}
++          </div>
++        )}
++      </div>
++
++      <div>
++        <CategoryBadge category={listing.category} />
++        <h1 className="mt-2 text-2xl font-bold text-slate-900">{listing.title}</h1>
++        <p className="mt-1 text-xl font-semibold text-slate-900">{formatPriceCents(listing.price_cents)}</p>
++        {listing.condition && (
++          <p className="mt-1 text-sm text-slate-500">Condition: {CONDITION_LABELS[listing.condition]}</p>
++        )}
++        {listing.quantity_available !== null && (
++          <p className="mt-1 text-sm text-slate-500">{listing.quantity_available} available</p>
++        )}
++        <p className="mt-4 whitespace-pre-wrap text-sm text-slate-700">{listing.description}</p>
++
++        {isOwnListing ? (
++          <Link href={`/${role}/marketplace/sell/${listing.id}`} className="mt-6 inline-block">
++            <Button variant="secondary">Edit this listing</Button>
++          </Link>
++        ) : listing.status !== "active" ? (
++          <p className="mt-6 text-sm text-slate-500">This listing is no longer active.</p>
++        ) : sent ? (
++          <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
++            <p className="font-semibold text-emerald-800">✅ Message sent</p>
++            <p className="mt-1 text-sm text-emerald-700">
++              The seller can reply in Messages — you two can work out payment and delivery there. Book Buddy
++              doesn&apos;t process any payment for this yet.
++            </p>
++            <Link href={`/${role}/messages`} className="mt-3 inline-block">
++              <Button variant="secondary">Go to Messages</Button>
++            </Link>
++          </div>
++        ) : (
++          <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-slate-200 p-4">
++            <p className="font-semibold text-slate-900">Interested? Message the seller</p>
++            <p className="text-xs text-slate-500">
++              Book Buddy doesn&apos;t handle payment or shipping for marketplace items yet — you and the seller
++              coordinate those details directly once you connect.
++            </p>
++            <textarea
++              value={message}
++              onChange={(e) => setMessage(e.target.value)}
++              rows={3}
++              maxLength={2000}
++              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200"
++            />
++            {error && <p className="text-sm text-red-600">{error}</p>}
++            <Button onClick={expressInterest} disabled={sending || !message.trim()}>
++              {sending ? "Sending…" : "Express interest"}
++            </Button>
++          </div>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/components/marketplace/ListingForm.tsx b/components/marketplace/ListingForm.tsx
+new file mode 100644
+index 0000000..1589e04
+--- /dev/null
++++ b/components/marketplace/ListingForm.tsx
+@@ -0,0 +1,264 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { useRouter } from "next/navigation";
++import { createClient } from "@/lib/supabase/client";
++import { Button } from "@/components/ui/Button";
++import { Input } from "@/components/ui/Input";
++import {
++  MARKETPLACE_CATEGORIES,
++  CATEGORY_LABELS,
++  CONDITION_LABELS,
++  type MarketplaceCategory,
++  type ListingCondition,
++} from "@/lib/marketplace";
++
++const MAX_PHOTOS = 6;
++
++interface ListingFormValues {
++  category: MarketplaceCategory;
++  title: string;
++  description: string;
++  priceDollars: string;
++  condition: ListingCondition | "";
++  unlimited: boolean;
++  quantityAvailable: string;
++  photoUrls: string[];
++}
++
++const EMPTY: ListingFormValues = {
++  category: "books",
++  title: "",
++  description: "",
++  priceDollars: "",
++  condition: "",
++  unlimited: true,
++  quantityAvailable: "",
++  photoUrls: [],
++};
++
++/** Create mode when listingId is omitted; edit mode fetches the existing
++ * row itself (same "component owns its own data" convention as
++ * MessagesInbox) so the app/parent and app/teacher edit pages can stay thin. */
++export function ListingForm({ role, listingId }: { role: "parent" | "teacher"; listingId?: string }) {
++  const router = useRouter();
++  const [values, setValues] = useState<ListingFormValues>(EMPTY);
++  const [loading, setLoading] = useState(Boolean(listingId));
++  const [uploading, setUploading] = useState(false);
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState("");
++
++  useEffect(() => {
++    if (!listingId) return;
++    const supabase = createClient();
++    supabase
++      .from("marketplace_listings")
++      .select("category, title, description, price_cents, condition, quantity_available, photo_urls")
++      .eq("id", listingId)
++      .single()
++      .then(({ data }) => {
++        if (data) {
++          setValues({
++            category: data.category,
++            title: data.title,
++            description: data.description,
++            priceDollars: (data.price_cents / 100).toString(),
++            condition: data.condition ?? "",
++            unlimited: data.quantity_available === null,
++            quantityAvailable: data.quantity_available !== null ? String(data.quantity_available) : "",
++            photoUrls: data.photo_urls ?? [],
++          });
++        }
++        setLoading(false);
++      });
++  }, [listingId]);
++
++  async function handlePhotoUpload(files: FileList | null) {
++    if (!files || files.length === 0) return;
++    setUploading(true);
++    setError("");
++    try {
++      const supabase = createClient();
++      const {
++        data: { user },
++      } = await supabase.auth.getUser();
++      if (!user) throw new Error("Not signed in.");
++
++      const uploaded: string[] = [];
++      for (const file of Array.from(files).slice(0, MAX_PHOTOS - values.photoUrls.length)) {
++        const path = `${user.id}/${crypto.randomUUID()}-${file.name}`;
++        const { error: uploadError } = await supabase.storage.from("marketplace-listing-photos").upload(path, file);
++        if (uploadError) throw uploadError;
++        const { data: publicUrl } = supabase.storage.from("marketplace-listing-photos").getPublicUrl(path);
++        uploaded.push(publicUrl.publicUrl);
++      }
++      setValues((v) => ({ ...v, photoUrls: [...v.photoUrls, ...uploaded].slice(0, MAX_PHOTOS) }));
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Photo upload failed.");
++    } finally {
++      setUploading(false);
++    }
++  }
++
++  function removePhoto(url: string) {
++    setValues((v) => ({ ...v, photoUrls: v.photoUrls.filter((u) => u !== url) }));
++  }
++
++  async function handleSubmit(e: React.FormEvent) {
++    e.preventDefault();
++    setSaving(true);
++    setError("");
++
++    const payload = {
++      category: values.category,
++      title: values.title,
++      description: values.description,
++      priceDollars: Number(values.priceDollars),
++      condition: values.condition || null,
++      quantityAvailable: values.unlimited ? null : Number(values.quantityAvailable),
++      photoUrls: values.photoUrls,
++    };
++
++    try {
++      const res = await fetch(listingId ? `/api/marketplace/listings/${listingId}` : "/api/marketplace/listings", {
++        method: listingId ? "PATCH" : "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify(payload),
++      });
++      const data = await res.json();
++      if (!res.ok) throw new Error(data.error ?? "Could not save listing.");
++      router.push(`/${role}/marketplace/sell`);
++      router.refresh();
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Something went wrong.");
++      setSaving(false);
++    }
++  }
++
++  if (loading) {
++    return <p className="text-sm text-slate-500">Loading listing…</p>;
++  }
++
++  return (
++    <form onSubmit={handleSubmit} className="flex max-w-xl flex-col gap-4">
++      <div>
++        <label className="mb-1.5 block text-sm font-medium text-slate-700">Category</label>
++        <select
++          value={values.category}
++          onChange={(e) => setValues((v) => ({ ...v, category: e.target.value as MarketplaceCategory }))}
++          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-900"
++        >
++          {MARKETPLACE_CATEGORIES.map((c) => (
++            <option key={c} value={c}>
++              {CATEGORY_LABELS[c]}
++            </option>
++          ))}
++        </select>
++      </div>
++
++      <Input
++        label="Title"
++        value={values.title}
++        onChange={(e) => setValues((v) => ({ ...v, title: e.target.value }))}
++        maxLength={140}
++        required
++      />
++
++      <div>
++        <label className="mb-1.5 block text-sm font-medium text-slate-700">Description</label>
++        <textarea
++          value={values.description}
++          onChange={(e) => setValues((v) => ({ ...v, description: e.target.value }))}
++          maxLength={4000}
++          rows={5}
++          required
++          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-900 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-200"
++        />
++      </div>
++
++      <Input
++        label="Asking price (USD)"
++        type="number"
++        min="0.01"
++        step="0.01"
++        value={values.priceDollars}
++        onChange={(e) => setValues((v) => ({ ...v, priceDollars: e.target.value }))}
++        required
++      />
++
++      <div>
++        <label className="mb-1.5 block text-sm font-medium text-slate-700">Condition (optional)</label>
++        <select
++          value={values.condition}
++          onChange={(e) => setValues((v) => ({ ...v, condition: e.target.value as ListingCondition | "" }))}
++          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-900"
++        >
++          <option value="">Not specified</option>
++          {Object.entries(CONDITION_LABELS).map(([value, label]) => (
++            <option key={value} value={value}>
++              {label}
++            </option>
++          ))}
++        </select>
++      </div>
++
++      <div>
++        <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
++          <input
++            type="checkbox"
++            checked={values.unlimited}
++            onChange={(e) => setValues((v) => ({ ...v, unlimited: e.target.checked }))}
++          />
++          Unlimited / appointment-based (tutoring, coaching, editing, etc.)
++        </label>
++        {!values.unlimited && (
++          <Input
++            label="Quantity available"
++            type="number"
++            min="0"
++            step="1"
++            value={values.quantityAvailable}
++            onChange={(e) => setValues((v) => ({ ...v, quantityAvailable: e.target.value }))}
++            className="mt-2"
++            required
++          />
++        )}
++      </div>
++
++      <div>
++        <label className="mb-1.5 block text-sm font-medium text-slate-700">Photos (up to {MAX_PHOTOS})</label>
++        <input
++          type="file"
++          accept="image/*"
++          multiple
++          onChange={(e) => handlePhotoUpload(e.target.files)}
++          disabled={uploading || values.photoUrls.length >= MAX_PHOTOS}
++        />
++        {values.photoUrls.length > 0 && (
++          <div className="mt-2 flex flex-wrap gap-2">
++            {values.photoUrls.map((url) => (
++              <div key={url} className="relative h-20 w-20 overflow-hidden rounded-lg border border-slate-200">
++                {/* Small fixed-size upload preview — next/image isn't worth the setup here. */}
++                {/* eslint-disable-next-line @next/next/no-img-element */}
++                <img src={url} alt="" className="h-full w-full object-cover" />
++                <button
++                  type="button"
++                  onClick={() => removePhoto(url)}
++                  className="absolute right-0 top-0 rounded-bl bg-black/60 px-1 text-xs text-white"
++                >
++                  ✕
++                </button>
++              </div>
++            ))}
++          </div>
++        )}
++      </div>
++
++      {error && <p className="text-sm text-red-600">{error}</p>}
++
++      <Button type="submit" disabled={saving || uploading}>
++        {saving ? "Saving…" : listingId ? "Save changes" : "Create listing"}
++      </Button>
++    </form>
++  );
++}
+diff --git a/components/marketplace/MarketplaceSubNav.tsx b/components/marketplace/MarketplaceSubNav.tsx
+new file mode 100644
+index 0000000..9155f12
+--- /dev/null
++++ b/components/marketplace/MarketplaceSubNav.tsx
+@@ -0,0 +1,39 @@
++"use client";
++
++import Link from "next/link";
++import { usePathname } from "next/navigation";
++
++const TABS = [
++  { path: "", label: "Browse" },
++  { path: "/sell", label: "Sell" },
++];
++
++const ACCENT: Record<"parent" | "teacher", string> = {
++  parent: "border-parent-primary text-slate-900",
++  teacher: "border-teacher-primary text-slate-900",
++};
++
++export function MarketplaceSubNav({ role }: { role: "parent" | "teacher" }) {
++  const pathname = usePathname();
++  const base = `/${role}/marketplace`;
++
++  return (
++    <div className="mb-6 flex gap-1 border-b border-slate-200">
++      {TABS.map((tab) => {
++        const href = `${base}${tab.path}`;
++        const active = tab.path === "" ? pathname === base : pathname.startsWith(href);
++        return (
++          <Link
++            key={href}
++            href={href}
++            className={`border-b-2 px-4 py-2 text-sm font-medium ${
++              active ? ACCENT[role] : "border-transparent text-slate-500 hover:text-slate-800"
++            }`}
++          >
++            {tab.label}
++          </Link>
++        );
++      })}
++    </div>
++  );
++}
+diff --git a/components/marketplace/MyListingsPanel.tsx b/components/marketplace/MyListingsPanel.tsx
+new file mode 100644
+index 0000000..66f7a6a
+--- /dev/null
++++ b/components/marketplace/MyListingsPanel.tsx
+@@ -0,0 +1,85 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import Link from "next/link";
++import { createClient } from "@/lib/supabase/client";
++import { Button } from "@/components/ui/Button";
++import { CategoryBadge } from "./CategoryBadge";
++import { formatPriceCents, type MarketplaceCategory } from "@/lib/marketplace";
++
++interface OwnListing {
++  id: string;
++  title: string;
++  category: MarketplaceCategory;
++  price_cents: number;
++  status: "active" | "inactive";
++}
++
++const LINK_COLOR: Record<"parent" | "teacher", string> = {
++  parent: "text-parent-primary",
++  teacher: "text-teacher-primary",
++};
++
++export function MyListingsPanel({ role }: { role: "parent" | "teacher" }) {
++  const [listings, setListings] = useState<OwnListing[] | null>(null);
++  const [busyId, setBusyId] = useState<string | null>(null);
++
++  async function load() {
++    const supabase = createClient();
++    const {
++      data: { user },
++    } = await supabase.auth.getUser();
++    if (!user) return;
++    const { data } = await supabase
++      .from("marketplace_listings")
++      .select("id, title, category, price_cents, status")
++      .eq("seller_id", user.id)
++      .order("created_at", { ascending: false });
++    setListings(data ?? []);
++  }
++
++  useEffect(() => {
++    void load();
++  }, []);
++
++  async function toggleStatus(id: string, current: "active" | "inactive") {
++    setBusyId(id);
++    await fetch(`/api/marketplace/listings/${id}`, {
++      method: "PATCH",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({ status: current === "active" ? "inactive" : "active" }),
++    });
++    await load();
++    setBusyId(null);
++  }
++
++  if (listings === null) return <p className="text-sm text-slate-500">Loading your listings…</p>;
++  if (listings.length === 0) return <p className="text-sm text-slate-500">You haven&apos;t listed anything yet.</p>;
++
++  return (
++    <div className="flex flex-col gap-2">
++      {listings.map((l) => (
++        <div key={l.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3">
++          <div>
++            <p className="font-medium text-slate-900">{l.title}</p>
++            <div className="mt-1 flex items-center gap-2">
++              <CategoryBadge category={l.category} />
++              <span className="text-xs text-slate-500">{formatPriceCents(l.price_cents)}</span>
++              <span className={`text-xs font-medium ${l.status === "active" ? "text-emerald-600" : "text-slate-400"}`}>
++                {l.status === "active" ? "Active" : "Inactive"}
++              </span>
++            </div>
++          </div>
++          <div className="flex items-center gap-3">
++            <Link href={`/${role}/marketplace/sell/${l.id}`} className={`text-sm font-medium hover:underline ${LINK_COLOR[role]}`}>
++              Edit
++            </Link>
++            <Button variant="secondary" disabled={busyId === l.id} onClick={() => toggleStatus(l.id, l.status)}>
++              {l.status === "active" ? "Deactivate" : "Reactivate"}
++            </Button>
++          </div>
++        </div>
++      ))}
++    </div>
++  );
++}
+diff --git a/components/marketplace/RecommendedListings.tsx b/components/marketplace/RecommendedListings.tsx
+new file mode 100644
+index 0000000..1b6849e
+--- /dev/null
++++ b/components/marketplace/RecommendedListings.tsx
+@@ -0,0 +1,56 @@
++"use client";
++
++import { useState } from "react";
++import { ListingCard } from "./ListingCard";
++import { Button } from "@/components/ui/Button";
++import type { MarketplaceCategory } from "@/lib/marketplace";
++
++interface RecItem {
++  listing: { id: string; title: string; category: MarketplaceCategory; price_cents: number; photo_urls: string[] };
++  why: string;
++}
++
++/** User-initiated (not automatic) — this is a best-effort suggestion
++ * feature, so it only calls the AI when someone actually asks for it. */
++export function RecommendedListings({ role }: { role: "parent" | "teacher" }) {
++  const [recs, setRecs] = useState<RecItem[] | null>(null);
++  const [loading, setLoading] = useState(false);
++  const [error, setError] = useState("");
++
++  async function fetchRecs() {
++    setLoading(true);
++    setError("");
++    try {
++      const res = await fetch("/api/marketplace/recommend", { method: "POST" });
++      const data = await res.json();
++      if (!res.ok) throw new Error(data.error ?? "Couldn't get suggestions.");
++      setRecs(data.recommendations ?? []);
++    } catch (err) {
++      setError(err instanceof Error ? err.message : "Something went wrong.");
++    } finally {
++      setLoading(false);
++    }
++  }
++
++  return (
++    <div className="mb-6 rounded-2xl border border-violet-200 bg-violet-50 p-4">
++      <div className="flex items-center justify-between">
++        <p className="font-semibold text-violet-900">✨ Suggested for your reader(s)</p>
++        <Button variant="ghost" onClick={fetchRecs} disabled={loading}>
++          {loading ? "Thinking…" : recs ? "Refresh" : "Get suggestions"}
++        </Button>
++      </div>
++      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
++      {recs && recs.length === 0 && (
++        <p className="mt-2 text-sm text-violet-700">No great matches yet — browse below instead.</p>
++      )}
++      {recs && recs.length > 0 && (
++        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
++          {recs.map((r) => (
++            <ListingCard key={r.listing.id} listing={r.listing} role={role} why={r.why} />
++          ))}
++        </div>
++      )}
++    </div>
++  );
++}
+-- 
+2.43.0
+

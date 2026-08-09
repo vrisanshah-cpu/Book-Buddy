@@ -1,0 +1,747 @@
+diff --git a/app/api/books/recommend/route.ts b/app/api/books/recommend/route.ts
+index ea51206..dfd708e 100644
+--- a/app/api/books/recommend/route.ts
++++ b/app/api/books/recommend/route.ts
+@@ -1,6 +1,7 @@
+ import { NextResponse } from "next/server";
+ import { createClient } from "@/lib/supabase/server";
+ import { callGemini, hasGeminiKey } from "@/lib/gemini";
++import { getEffectiveBlocksForKid, filterBlockedBooks, describeBlocksForPrompt } from "@/lib/content-blocks";
+ 
+ const SYSTEM_PROMPT = `You recommend books to children ages 5-12 based on what they've already read.
+ Return ONLY valid JSON, no markdown fences, in this exact shape:
+@@ -32,14 +33,20 @@ export async function POST() {
+     })
+     .filter(Boolean);
+ 
++  const blocks = await getEffectiveBlocksForKid(supabase, user.id);
++  const blockLines = describeBlocksForPrompt(blocks);
++
+   const prompt =
+-    readBooks.length > 0
++    (readBooks.length > 0
+       ? `Here is the child's reading list so far:\n${readBooks.join("\n")}\n\nRecommend 5 new books they'd probably love.`
+-      : `This child hasn't logged any books yet. Recommend 5 great, popular books for kids ages 5-12 across different genres.`;
++      : `This child hasn't logged any books yet. Recommend 5 great, popular books for kids ages 5-12 across different genres.`) +
++    (blockLines.length > 0 ? `\n\nContent restrictions from this child's parent/teacher:\n${blockLines.join("\n")}` : "");
+ 
+   try {
+     const raw = await callGemini(SYSTEM_PROMPT, [{ role: "user", text: prompt }], { jsonMode: true });
+     const parsed = JSON.parse(raw);
++    // Prompt-level exclusion is best-effort — always enforce authoritatively here too.
++    parsed.recommendations = filterBlockedBooks(blocks, parsed.recommendations ?? []);
+     return NextResponse.json(parsed);
+   } catch {
+     return NextResponse.json({ error: "Couldn't get recommendations right now." }, { status: 500 });
+diff --git a/app/api/books/shelf/route.ts b/app/api/books/shelf/route.ts
+index 4144066..74ec2c1 100644
+--- a/app/api/books/shelf/route.ts
++++ b/app/api/books/shelf/route.ts
+@@ -1,6 +1,8 @@
+ import { NextResponse } from "next/server";
+ import { createClient } from "@/lib/supabase/server";
++import { createAdminClient } from "@/lib/supabase/admin";
+ import { addToShelf, ensureBook } from "@/lib/books";
++import { getEffectiveBlocksForKid, isBookBlocked } from "@/lib/content-blocks";
+ import type { BookStatus } from "@/lib/types";
+ 
+ export async function POST(request: Request) {
+@@ -33,6 +35,19 @@ export async function POST(request: Request) {
+     shelfUserId = targetUserId;
+   }
+ 
++  // Self case: RLS already scopes getEffectiveBlocksForKid correctly via
++  // `supabase`. Parent-for-child case (targetUserId branch above) is a
++  // cross-user read, so use the admin client per this project's rule for
++  // cross-user writes/reads on behalf of a student/child.
++  const blocksClient = shelfUserId === user.id ? supabase : createAdminClient();
++  const blocks = await getEffectiveBlocksForKid(blocksClient, shelfUserId);
++  if (isBookBlocked(blocks, { title, author })) {
++    return NextResponse.json(
++      { error: "This book is blocked by a content setting from a parent or teacher." },
++      { status: 403 }
++    );
++  }
++
+   try {
+     const bookId = await ensureBook(
+       supabase,
+diff --git a/app/api/pip-chat/route.ts b/app/api/pip-chat/route.ts
+index accd850..559c2b6 100644
+--- a/app/api/pip-chat/route.ts
++++ b/app/api/pip-chat/route.ts
+@@ -1,6 +1,7 @@
+ import { NextResponse } from "next/server";
+ import { createClient } from "@/lib/supabase/server";
+ import { callGemini, hasGeminiKey } from "@/lib/gemini";
++import { getEffectiveBlocksForKid, describeBlocksForPrompt } from "@/lib/content-blocks";
+ 
+ const PIP_SYSTEM_PROMPT = `You are Pip, a friendly owl who is a reading buddy for children ages 5-12 inside the Book Buddy app.
+ Rules:
+@@ -55,9 +56,13 @@ export async function POST(request: Request) {
+     ? `${PIP_SYSTEM_PROMPT}\nThe child is currently reading: "${bookTitle}".`
+     : PIP_SYSTEM_PROMPT;
+ 
++  const blockLines = describeBlocksForPrompt(await getEffectiveBlocksForKid(supabase, user.id));
++  const finalSystemPrompt =
++    blockLines.length > 0 ? `${systemPrompt}\n${blockLines.join("\n")}` : systemPrompt;
++
+   let reply: string;
+   try {
+-    reply = await callGemini(systemPrompt, turns);
++    reply = await callGemini(finalSystemPrompt, turns);
+   } catch {
+     return NextResponse.json(
+       { error: "Pip is taking a nap. Try again in a bit!" },
+diff --git a/app/api/reading-game/route.ts b/app/api/reading-game/route.ts
+index 039b622..f05bdc0 100644
+--- a/app/api/reading-game/route.ts
++++ b/app/api/reading-game/route.ts
+@@ -4,6 +4,7 @@ import { awardXp, syncChallengeProgress } from "@/lib/challenges";
+ import { XP_REWARDS } from "@/lib/xp";
+ import { buildDemoQuiz } from "@/lib/demo-quiz";
+ import { callGemini, hasGeminiKey } from "@/lib/gemini";
++import { getEffectiveBlocksForKid, isBookBlocked } from "@/lib/content-blocks";
+ 
+ const QUIZ_SYSTEM_PROMPT = `You are a reading comprehension quiz generator for children ages 5-12.
+ Generate exactly 5 multiple choice questions about the book provided.
+@@ -26,6 +27,14 @@ export async function POST(request: Request) {
+   if (action === "generate") {
+     const { title, author, description } = body;
+ 
++    const blocks = await getEffectiveBlocksForKid(supabase, user.id);
++    if (isBookBlocked(blocks, { title, author })) {
++      return NextResponse.json(
++        { error: "This book isn't available because of a content setting from your parent or teacher." },
++        { status: 403 }
++      );
++    }
++
+     if (!hasGeminiKey()) {
+       return NextResponse.json(buildDemoQuiz(title ?? "this book", author ?? "the author"));
+     }
+diff --git a/app/teacher/settings/page.tsx b/app/teacher/settings/page.tsx
+new file mode 100644
+index 0000000..7b04366
+--- /dev/null
++++ b/app/teacher/settings/page.tsx
+@@ -0,0 +1,16 @@
++import { redirect } from "next/navigation";
++import { getProfile, createClient } from "@/lib/supabase/server";
++import { TeacherSettingsClient } from "@/components/teacher/TeacherSettingsClient";
++
++export default async function TeacherSettingsPage() {
++  const { user, profile } = await getProfile();
++  if (!user || profile?.role !== "teacher") redirect("/auth/login");
++
++  const supabase = await createClient();
++  const { data: classrooms } = await supabase
++    .from("classrooms")
++    .select("id, name")
++    .eq("teacher_id", user.id);
++
++  return <TeacherSettingsClient teacherId={user.id} classrooms={classrooms ?? []} />;
++}
+diff --git a/components/content-blocks/ContentBlocksManager.tsx b/components/content-blocks/ContentBlocksManager.tsx
+new file mode 100644
+index 0000000..dd5e656
+--- /dev/null
++++ b/components/content-blocks/ContentBlocksManager.tsx
+@@ -0,0 +1,210 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { createClient } from "@/lib/supabase/client";
++import { Button } from "@/components/ui/Button";
++import { Input } from "@/components/ui/Input";
++
++type Scope = "child" | "classroom";
++type BlockType = "book" | "author" | "topic_keyword";
++
++interface Target {
++  id: string;
++  label: string;
++}
++
++interface BlockRow {
++  id: string;
++  block_type: BlockType;
++  author_name: string | null;
++  keyword: string | null;
++  book: { title: string; author: string } | null;
++  targetId: string;
++}
++
++function summarize(block: BlockRow): string {
++  if (block.block_type === "author") return `Author: ${block.author_name}`;
++  if (block.block_type === "topic_keyword") return `Topic: ${block.keyword}`;
++  if (block.book) return `Book: ${block.book.title} by ${block.book.author}`;
++  return "Book";
++}
++
++/**
++ * Add/remove content blocks for a single child (scope="child") or
++ * classroom (scope="classroom"). Reads and writes public.content_blocks
++ * directly via the browser Supabase client — RLS (migration 017) already
++ * restricts a parent to their own linked children and a teacher to their
++ * own classrooms, so no API route is needed for this.
++ */
++export function ContentBlocksManager({
++  scope,
++  blockerId,
++  targets,
++  emptyTargetsMessage,
++}: {
++  scope: Scope;
++  blockerId: string;
++  targets: Target[];
++  emptyTargetsMessage: string;
++}) {
++  const supabase = createClient();
++  const [targetId, setTargetId] = useState(targets[0]?.id ?? "");
++  const [blockType, setBlockType] = useState<BlockType>("author");
++  const [authorName, setAuthorName] = useState("");
++  const [keyword, setKeyword] = useState("");
++  const [bookTitle, setBookTitle] = useState("");
++  const [blocks, setBlocks] = useState<BlockRow[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [message, setMessage] = useState("");
++
++  useEffect(() => {
++    void loadBlocks();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, []);
++
++  async function loadBlocks() {
++    setLoading(true);
++    const targetColumn = scope === "child" ? "child_id" : "classroom_id";
++    const { data } = await supabase
++      .from("content_blocks")
++      .select(`id, block_type, author_name, keyword, target:${targetColumn}, book:books(title, author)`)
++      .eq("blocked_by", blockerId);
++
++    setBlocks(
++      (data ?? []).map((row) => {
++        const bookData = Array.isArray(row.book) ? row.book[0] ?? null : row.book;
++        return {
++          id: row.id,
++          block_type: row.block_type,
++          author_name: row.author_name,
++          keyword: row.keyword,
++          book: bookData,
++          targetId: row.target,
++        } as BlockRow;
++      })
++    );
++    setLoading(false);
++  }
++
++  async function addBlock() {
++    setMessage("");
++    if (!targetId) {
++      setMessage(emptyTargetsMessage);
++      return;
++    }
++    if (blockType === "author" && !authorName.trim()) return;
++    if (blockType === "topic_keyword" && !keyword.trim()) return;
++    if (blockType === "book" && !bookTitle.trim()) return;
++
++    const payload: Record<string, unknown> = {
++      blocked_by: blockerId,
++      scope,
++      block_type: blockType,
++      child_id: scope === "child" ? targetId : null,
++      classroom_id: scope === "classroom" ? targetId : null,
++    };
++    if (blockType === "author") payload.author_name = authorName.trim();
++    if (blockType === "topic_keyword") payload.keyword = keyword.trim();
++    if (blockType === "book") {
++      // Book blocks need a books.id — treat the typed title as a keyword
++      // block instead so it still takes effect immediately without a
++      // lookup step. (A future pass could add a book search/picker here.)
++      payload.block_type = "topic_keyword";
++      payload.keyword = bookTitle.trim();
++    }
++
++    const { error } = await supabase.from("content_blocks").insert(payload);
++    if (error) {
++      setMessage("Couldn't add that block: " + error.message);
++      return;
++    }
++    setAuthorName("");
++    setKeyword("");
++    setBookTitle("");
++    await loadBlocks();
++  }
++
++  async function removeBlock(id: string) {
++    const { error } = await supabase.from("content_blocks").delete().eq("id", id);
++    if (error) {
++      setMessage("Couldn't remove that block: " + error.message);
++      return;
++    }
++    setBlocks((prev) => prev.filter((b) => b.id !== id));
++  }
++
++  const blocksForTarget = blocks.filter((b) => b.targetId === targetId);
++
++  return (
++    <div className="rounded-xl bg-white p-6 shadow-sm">
++      <h2 className="font-semibold">Content controls</h2>
++      <p className="mt-1 text-sm text-slate-500">
++        Block a specific book, author, or topic from recommendations, search, Pip chat, and quizzes.
++      </p>
++
++      {targets.length === 0 ? (
++        <p className="mt-4 text-sm text-slate-500">{emptyTargetsMessage}</p>
++      ) : (
++        <>
++          <div className="mt-4 flex flex-wrap gap-2">
++            {targets.map((t) => (
++              <button
++                key={t.id}
++                type="button"
++                onClick={() => setTargetId(t.id)}
++                className={`rounded-full px-3 py-1.5 text-sm font-semibold ${
++                  targetId === t.id ? "bg-kids-purple text-white" : "bg-slate-100 text-slate-700"
++                }`}
++              >
++                {t.label}
++              </button>
++            ))}
++          </div>
++
++          <div className="mt-4 flex flex-wrap items-end gap-2">
++            <div>
++              <label className="mb-1.5 block text-sm font-medium text-slate-700">Block type</label>
++              <select
++                value={blockType}
++                onChange={(e) => setBlockType(e.target.value as BlockType)}
++                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-slate-900 outline-none focus:border-violet-400 focus:ring-2"
++              >
++                <option value="author">Author</option>
++                <option value="topic_keyword">Topic keyword</option>
++                <option value="book">Specific book (by title)</option>
++              </select>
++            </div>
++            {blockType === "author" && (
++              <Input placeholder="Author name" value={authorName} onChange={(e) => setAuthorName(e.target.value)} />
++            )}
++            {blockType === "topic_keyword" && (
++              <Input placeholder="e.g. ghosts, zombies" value={keyword} onChange={(e) => setKeyword(e.target.value)} />
++            )}
++            {blockType === "book" && (
++              <Input placeholder="Book title" value={bookTitle} onChange={(e) => setBookTitle(e.target.value)} />
++            )}
++            <Button variant="secondary" onClick={addBlock}>
++              Add block
++            </Button>
++          </div>
++          {message && <p className="mt-2 text-sm text-red-600">{message}</p>}
++
++          <ul className="mt-4 space-y-2">
++            {loading && <li className="text-sm text-slate-400">Loading…</li>}
++            {!loading && blocksForTarget.length === 0 && (
++              <li className="text-sm text-slate-400">No blocks yet for this {scope === "child" ? "child" : "classroom"}.</li>
++            )}
++            {blocksForTarget.map((b) => (
++              <li key={b.id} className="flex items-center justify-between gap-3 rounded-lg bg-slate-50 px-4 py-2 text-sm">
++                <span>{summarize(b)}</span>
++                <button type="button" onClick={() => removeBlock(b.id)} className="text-xs font-semibold text-red-500 hover:text-red-700">
++                  Remove
++                </button>
++              </li>
++            ))}
++          </ul>
++        </>
++      )}
++    </div>
++  );
++}
+diff --git a/components/kids/DiscoverClient.tsx b/components/kids/DiscoverClient.tsx
+index 4337209..b74b329 100644
+--- a/components/kids/DiscoverClient.tsx
++++ b/components/kids/DiscoverClient.tsx
+@@ -1,10 +1,11 @@
+ "use client";
+ 
+-import { useState } from "react";
++import { useEffect, useState } from "react";
+ import { Button } from "@/components/ui/Button";
+ import { Input } from "@/components/ui/Input";
+ import { createClient } from "@/lib/supabase/client";
+ import { searchByAuthor } from "@/lib/open-library";
++import { getEffectiveBlocksForKid, filterBlockedBooks, type EffectiveBlocks } from "@/lib/content-blocks";
+ 
+ interface Rec {
+   title: string;
+@@ -80,6 +81,30 @@ export function DiscoverClient() {
+   const [authorQuery, setAuthorQuery] = useState("");
+   const [authorResults, setAuthorResults] = useState<AuthorBook[]>([]);
+   const [searchingAuthor, setSearchingAuthor] = useState(false);
++  const [authorBlockedMessage, setAuthorBlockedMessage] = useState("");
++
++  const [blocks, setBlocks] = useState<EffectiveBlocks>({
++    blockedBookIds: new Set(),
++    blockedAuthors: new Set(),
++    blockedKeywords: [],
++  });
++
++  useEffect(() => {
++    let cancelled = false;
++    async function loadBlocks() {
++      const {
++        data: { user },
++      } = await supabase.auth.getUser();
++      if (!user || cancelled) return;
++      const effective = await getEffectiveBlocksForKid(supabase, user.id);
++      if (!cancelled) setBlocks(effective);
++    }
++    void loadBlocks();
++    return () => {
++      cancelled = true;
++    };
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, []);
+ 
+   async function loadRecs() {
+     setLoadingRecs(true);
+@@ -92,7 +117,7 @@ export function DiscoverClient() {
+       return;
+     }
+     if (res.ok) {
+-      setRecs(data.recommendations ?? []);
++      setRecs(filterBlockedBooks(blocks, data.recommendations ?? []));
+     } else {
+       setRecError(data.error ?? "Something went wrong.");
+     }
+@@ -101,7 +126,7 @@ export function DiscoverClient() {
+   async function loadFeatured() {
+     const siteRes = await fetch("/api/books/featured");
+     const siteData = await siteRes.json();
+-    setSiteFeatured(siteData.books ?? []);
++    setSiteFeatured(filterBlockedBooks(blocks, siteData.books ?? []));
+ 
+     const { data: link } = await supabase
+       .from("teacher_student")
+@@ -117,9 +142,12 @@ export function DiscoverClient() {
+         .select("book_id, book:books(id, title, author, cover_url, description)")
+         .eq("classroom_id", link.classroom_id);
+       setClassroomFeatured(
+-        (data ?? [])
+-          .map((r) => (Array.isArray(r.book) ? r.book[0] : r.book))
+-          .filter((b): b is FeaturedBook => Boolean(b))
++        filterBlockedBooks(
++          blocks,
++          (data ?? [])
++            .map((r) => (Array.isArray(r.book) ? r.book[0] : r.book))
++            .filter((b): b is FeaturedBook => Boolean(b))
++        )
+       );
+     } else {
+       setInClassroom(false);
+@@ -140,8 +168,15 @@ export function DiscoverClient() {
+ 
+   async function searchAuthor() {
+     if (!authorQuery.trim()) return;
++    setAuthorBlockedMessage("");
++    if (blocks.blockedAuthors.has(authorQuery.trim().toLowerCase())) {
++      setAuthorResults([]);
++      setAuthorBlockedMessage("This author isn't available because of a content setting from your parent or teacher.");
++      return;
++    }
+     setSearchingAuthor(true);
+-    setAuthorResults(await searchByAuthor(authorQuery.trim()));
++    const results = await searchByAuthor(authorQuery.trim());
++    setAuthorResults(filterBlockedBooks(blocks, results));
+     setSearchingAuthor(false);
+   }
+ 
+@@ -246,6 +281,7 @@ export function DiscoverClient() {
+               <BookCard key={`${b.title}-${i}`} book={b} added={added.has(b.title)} onAdd={() => addToWantToRead(b.title, b.author)} />
+             ))}
+           </div>
++          {authorBlockedMessage && <p className="mt-3 text-sm text-red-600">{authorBlockedMessage}</p>}
+         </section>
+       )}
+     </div>
+diff --git a/components/parent/ParentSettingsClient.tsx b/components/parent/ParentSettingsClient.tsx
+index 4a9c7b4..ea7f433 100644
+--- a/components/parent/ParentSettingsClient.tsx
++++ b/components/parent/ParentSettingsClient.tsx
+@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
+ import { createClient } from "@/lib/supabase/client";
+ import { Button } from "@/components/ui/Button";
+ import { Input } from "@/components/ui/Input";
++import { ContentBlocksManager } from "@/components/content-blocks/ContentBlocksManager";
+ 
+ interface ParentChildProfileData {
+   id: string;
+@@ -164,6 +165,15 @@ export function ParentSettingsClient({
+         </ul>
+       </section>
+ 
++      <section className="mt-8">
++        <ContentBlocksManager
++          scope="child"
++          blockerId={parentId}
++          targets={linkedChildren.map((c) => ({ id: c.id, label: c.display_name }))}
++          emptyTargetsMessage="Add a child profile first, then you can set content controls for them."
++        />
++      </section>
++
+       <section className="mt-8 rounded-xl bg-white p-6 shadow-sm">
+         <h2 className="font-semibold">Link an existing child profile</h2>
+         <p className="mt-1 text-sm text-slate-500">
+diff --git a/components/teacher/TeacherNav.tsx b/components/teacher/TeacherNav.tsx
+index dd0a8e6..3698e48 100644
+--- a/components/teacher/TeacherNav.tsx
++++ b/components/teacher/TeacherNav.tsx
+@@ -11,6 +11,7 @@ const links = [
+   { href: "/teacher/book-lists", label: "Book Lists" },
+   { href: "/teacher/challenges", label: "Challenges" },
+   { href: "/teacher/book-clubs", label: "Book Clubs" },
++  { href: "/teacher/settings", label: "Settings" },
+ ];
+ 
+ export function TeacherNav() {
+diff --git a/components/teacher/TeacherSettingsClient.tsx b/components/teacher/TeacherSettingsClient.tsx
+new file mode 100644
+index 0000000..5184253
+--- /dev/null
++++ b/components/teacher/TeacherSettingsClient.tsx
+@@ -0,0 +1,32 @@
++"use client";
++
++import { ContentBlocksManager } from "@/components/content-blocks/ContentBlocksManager";
++
++interface Classroom {
++  id: string;
++  name: string;
++}
++
++export function TeacherSettingsClient({
++  teacherId,
++  classrooms,
++}: {
++  teacherId: string;
++  classrooms: Classroom[];
++}) {
++  return (
++    <div>
++      <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
++      <p className="mt-1 text-teacher-muted">Content controls apply to every student in the selected classroom.</p>
++
++      <div className="mt-6">
++        <ContentBlocksManager
++          scope="classroom"
++          blockerId={teacherId}
++          targets={classrooms.map((c) => ({ id: c.id, label: c.name }))}
++          emptyTargetsMessage="Create a classroom first, then you can set content controls for it."
++        />
++      </div>
++    </div>
++  );
++}
+diff --git a/lib/content-blocks.ts b/lib/content-blocks.ts
+new file mode 100644
+index 0000000..718ea1e
+--- /dev/null
++++ b/lib/content-blocks.ts
+@@ -0,0 +1,114 @@
++import type { SupabaseClient } from "@supabase/supabase-js";
++
++export type ContentBlockType = "book" | "author" | "topic_keyword";
++
++export interface ContentBlockRow {
++  block_type: ContentBlockType;
++  book_id: string | null;
++  author_name: string | null;
++  keyword: string | null;
++}
++
++export interface EffectiveBlocks {
++  blockedBookIds: Set<string>;
++  blockedAuthors: Set<string>; // lowercased
++  blockedKeywords: string[]; // original casing, for prompt injection + substring matching
++}
++
++/**
++ * Loads every content_blocks row that currently applies to `kidId` — both
++ * blocks set directly on the child, and blocks set on any classroom
++ * they're in — and shapes it into fast-lookup sets.
++ *
++ * Works with either the kid's own RLS-scoped client (server or browser)
++ * or an admin/service-role client. Classroom membership is resolved
++ * explicitly and folded into the query rather than relied on via RLS,
++ * because when this is called with the admin client (e.g. a parent
++ * adding a book to their child's shelf — see app/api/books/shelf) RLS is
++ * bypassed entirely, so the scoping has to happen here.
++ */
++export async function getEffectiveBlocksForKid(
++  supabase: SupabaseClient,
++  kidId: string
++): Promise<EffectiveBlocks> {
++  const empty: EffectiveBlocks = {
++    blockedBookIds: new Set(),
++    blockedAuthors: new Set(),
++    blockedKeywords: [],
++  };
++  if (!kidId) return empty;
++
++  const { data: memberships } = await supabase
++    .from("teacher_student")
++    .select("classroom_id")
++    .eq("student_id", kidId)
++    .not("classroom_id", "is", null);
++
++  const classroomIds = (memberships ?? [])
++    .map((m: { classroom_id: string | null }) => m.classroom_id)
++    .filter((id: string | null): id is string => Boolean(id));
++
++  const orParts = [`and(scope.eq.child,child_id.eq.${kidId})`];
++  if (classroomIds.length > 0) {
++    orParts.push(`and(scope.eq.classroom,classroom_id.in.(${classroomIds.join(",")}))`);
++  }
++
++  const { data, error } = await supabase
++    .from("content_blocks")
++    .select("block_type, book_id, author_name, keyword")
++    .or(orParts.join(","));
++
++  if (error || !data) return empty;
++
++  const blockedBookIds = new Set<string>();
++  const blockedAuthors = new Set<string>();
++  const blockedKeywords: string[] = [];
++
++  for (const row of data as ContentBlockRow[]) {
++    if (row.block_type === "book" && row.book_id) blockedBookIds.add(row.book_id);
++    if (row.block_type === "author" && row.author_name) blockedAuthors.add(row.author_name.trim().toLowerCase());
++    if (row.block_type === "topic_keyword" && row.keyword) blockedKeywords.push(row.keyword.trim());
++  }
++
++  return { blockedBookIds, blockedAuthors, blockedKeywords };
++}
++
++/**
++ * True if this book trips any of the kid's blocks — by internal book id
++ * (when known, e.g. featured books), by author name, or by a topic
++ * keyword appearing in the title. All fields are optional so this works
++ * for internal Books rows, Gemini recommendations, and Open Library
++ * search results alike.
++ */
++export function isBookBlocked(
++  blocks: EffectiveBlocks,
++  book: { id?: string | null; author?: string | null; title?: string | null }
++): boolean {
++  if (book.id && blocks.blockedBookIds.has(book.id)) return true;
++  if (book.author && blocks.blockedAuthors.has(book.author.trim().toLowerCase())) return true;
++  if (book.title) {
++    const haystack = book.title.toLowerCase();
++    if (blocks.blockedKeywords.some((k) => k && haystack.includes(k.toLowerCase()))) return true;
++  }
++  return false;
++}
++
++/** Convenience filter for a list of book-like objects. */
++export function filterBlockedBooks<T extends { id?: string | null; author?: string | null; title?: string | null }>(
++  blocks: EffectiveBlocks,
++  books: T[]
++): T[] {
++  return books.filter((b) => !isBookBlocked(blocks, b));
++}
++
++/** Short, plain-language instruction lines for injecting into an AI system prompt. */
++export function describeBlocksForPrompt(blocks: EffectiveBlocks): string[] {
++  const lines: string[] = [];
++  if (blocks.blockedAuthors.size > 0) {
++    lines.push(`Never discuss, recommend, or quote these authors or their books: ${Array.from(blocks.blockedAuthors).join(", ")}.`);
++  }
++  if (blocks.blockedKeywords.length > 0) {
++    lines.push(`Never discuss these topics, even if asked directly: ${blocks.blockedKeywords.join(", ")}.`);
++  }
++  return lines;
++}
+diff --git a/supabase/migrations/017_content_blocks.sql b/supabase/migrations/017_content_blocks.sql
+new file mode 100644
+index 0000000..606fc32
+--- /dev/null
++++ b/supabase/migrations/017_content_blocks.sql
+@@ -0,0 +1,76 @@
++-- Phase C: content controls — a parent or teacher can block a specific
++-- book, author, or topic keyword for a linked child ('child' scope) or an
++-- entire classroom ('classroom' scope). Enforced app-side in
++-- lib/content-blocks.ts, used from Discover recommendations/search, the
++-- shelf-add endpoint, Pip chat, and the reading-game AI quiz generator.
++
++create table if not exists public.content_blocks (
++  id uuid primary key default gen_random_uuid(),
++  blocked_by uuid not null references public.users(id) on delete cascade,
++  scope text not null check (scope in ('child', 'classroom')),
++  child_id uuid references public.users(id) on delete cascade,
++  classroom_id uuid references public.classrooms(id) on delete cascade,
++  block_type text not null check (block_type in ('book', 'author', 'topic_keyword')),
++  book_id uuid references public.books(id) on delete cascade,
++  author_name text,
++  keyword text,
++  created_at timestamptz not null default now(),
++  constraint content_blocks_scope_target check (
++    (scope = 'child' and child_id is not null and classroom_id is null)
++    or (scope = 'classroom' and classroom_id is not null and child_id is null)
++  ),
++  constraint content_blocks_type_payload check (
++    (block_type = 'book' and book_id is not null and author_name is null and keyword is null)
++    or (block_type = 'author' and author_name is not null and book_id is null and keyword is null)
++    or (block_type = 'topic_keyword' and keyword is not null and book_id is null and author_name is null)
++  )
++);
++
++create index if not exists content_blocks_child_id_idx on public.content_blocks (child_id) where child_id is not null;
++create index if not exists content_blocks_classroom_id_idx on public.content_blocks (classroom_id) where classroom_id is not null;
++create index if not exists content_blocks_blocked_by_idx on public.content_blocks (blocked_by);
++
++alter table public.content_blocks enable row level security;
++
++-- A parent/teacher sees the blocks they personally created.
++drop policy if exists "content_blocks_select_own" on public.content_blocks;
++create policy "content_blocks_select_own" on public.content_blocks for select
++  using (blocked_by = auth.uid());
++
++-- A kid can see blocks that apply directly to them...
++drop policy if exists "content_blocks_select_affected_child" on public.content_blocks;
++create policy "content_blocks_select_affected_child" on public.content_blocks for select
++  using (scope = 'child' and child_id = auth.uid());
++
++-- ...or to a classroom they're a student in.
++drop policy if exists "content_blocks_select_affected_classroom" on public.content_blocks;
++create policy "content_blocks_select_affected_classroom" on public.content_blocks for select
++  using (
++    scope = 'classroom'
++    and classroom_id in (
++      select ts.classroom_id from public.teacher_student ts
++      where ts.student_id = auth.uid() and ts.classroom_id is not null
++    )
++  );
++
++-- Parents may only create 'child'-scope blocks for children linked to them.
++drop policy if exists "content_blocks_parent_insert" on public.content_blocks;
++create policy "content_blocks_parent_insert" on public.content_blocks for insert
++  with check (
++    blocked_by = auth.uid()
++    and scope = 'child'
++    and public.is_parent_of(child_id)
++  );
++
++-- Teachers may only create 'classroom'-scope blocks for classrooms they own.
++drop policy if exists "content_blocks_teacher_insert" on public.content_blocks;
++create policy "content_blocks_teacher_insert" on public.content_blocks for insert
++  with check (
++    blocked_by = auth.uid()
++    and scope = 'classroom'
++    and classroom_id in (select c.id from public.classrooms c where c.teacher_id = auth.uid())
++  );
++
++drop policy if exists "content_blocks_delete_own" on public.content_blocks;
++create policy "content_blocks_delete_own" on public.content_blocks for delete
++  using (blocked_by = auth.uid());
