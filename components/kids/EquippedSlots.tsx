@@ -3,6 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { CharacterCanvas } from "@/components/kids/CharacterCanvas";
+import type { CosmeticItem, CosmeticSlot } from "@/lib/character";
 
 interface OwnedBadge {
   id: string;
@@ -13,28 +15,20 @@ interface OwnedTitle {
   id: string;
   name: string;
 }
-interface EquippedCosmeticItem {
-  id: string;
-  name: string;
-  icon_or_asset: string;
-}
 
 export function EquippedSlots({
-  avatarUrl,
+  characterEquipped,
   ownedBadges,
   ownedTitles,
   equippedBadge,
   equippedTitle,
-  equippedAccessory,
-  equippedPet,
 }: {
-  avatarUrl: string | null;
+  /** From resolveEquippedCharacter() (lib/character.ts) — already has starter fallbacks applied. */
+  characterEquipped: Partial<Record<CosmeticSlot, CosmeticItem | null>>;
   ownedBadges: OwnedBadge[];
   ownedTitles: OwnedTitle[];
   equippedBadge: OwnedBadge | null;
   equippedTitle: OwnedTitle | null;
-  equippedAccessory?: EquippedCosmeticItem | null;
-  equippedPet?: EquippedCosmeticItem | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState<"badge" | "title" | null>(null);
@@ -55,29 +49,9 @@ export function EquippedSlots({
   return (
     <>
       <div className="flex items-center gap-3">
-        <div className="relative">
-          <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-white/20 text-3xl">
-            {avatarUrl ?? "📖"}
-          </div>
-          {equippedAccessory && (
-            <span
-              className="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full bg-white text-base shadow"
-              title={equippedAccessory.name}
-              aria-hidden="true"
-            >
-              {equippedAccessory.icon_or_asset}
-            </span>
-          )}
-          {equippedPet && (
-            <Link
-              href="/kids/shop"
-              className="absolute -bottom-1 -left-1 flex h-7 w-7 items-center justify-center rounded-full bg-white text-base shadow"
-              title={`Your buddy: ${equippedPet.name}`}
-            >
-              {equippedPet.icon_or_asset}
-            </Link>
-          )}
-        </div>
+        <Link href="/kids/character" className="block h-14 w-14 shrink-0 overflow-hidden rounded-full bg-white/20" title="Customize your character">
+          <CharacterCanvas equipped={characterEquipped} className="!aspect-auto !rounded-full" />
+        </Link>
         <div className="flex flex-col gap-1">
           <button
             type="button"

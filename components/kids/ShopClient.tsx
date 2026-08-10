@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 
-type Category = "avatar_accessory" | "shelf_theme" | "pet" | "xp_booster" | "streak_freeze";
+// Only the two survivors after the Character System replaced
+// avatar_accessory/shelf_theme/pet as real cosmetics (see migration 029
+// and /kids/character) — this shop is utility items only now, so there's
+// no equip concept left here at all.
+type Category = "xp_booster" | "streak_freeze";
 
 interface ShopItem {
   id: string;
@@ -16,15 +20,11 @@ interface ShopItem {
 }
 
 const CATEGORY_LABELS: Record<Category, string> = {
-  avatar_accessory: "Accessories",
-  shelf_theme: "Shelf Themes",
-  pet: "Book Pets",
   xp_booster: "Boosters",
   streak_freeze: "Streak Freezes",
 };
 
-const CATEGORY_ORDER: Category[] = ["avatar_accessory", "shelf_theme", "pet", "xp_booster", "streak_freeze"];
-const EQUIPPABLE = new Set<Category>(["avatar_accessory", "shelf_theme", "pet"]);
+const CATEGORY_ORDER: Category[] = ["xp_booster", "streak_freeze"];
 
 const RARITY_STYLES: Record<ShopItem["rarity"], string> = {
   common: "bg-slate-100 text-slate-600",
@@ -37,17 +37,14 @@ export function ShopClient({
   xp: initialXp,
   items,
   owned: initialOwned,
-  equipped: initialEquipped,
 }: {
   xp: number;
   items: ShopItem[];
   owned: Record<string, number>;
-  equipped: Record<"avatar_accessory" | "shelf_theme" | "pet", string | null>;
 }) {
   const [xp, setXp] = useState(initialXp);
   const [owned, setOwned] = useState(initialOwned);
-  const [equipped, setEquipped] = useState(initialEquipped);
-  const [activeCategory, setActiveCategory] = useState<Category>("avatar_accessory");
+  const [activeCategory, setActiveCategory] = useState<Category>("xp_booster");
   const [busyItemId, setBusyItemId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
 
@@ -69,23 +66,6 @@ export function ShopClient({
     setOwned((prev) => ({ ...prev, [item.id]: (prev[item.id] ?? 0) + 1 }));
   }
 
-  async function equip(item: ShopItem) {
-    setMessage("");
-    setBusyItemId(item.id);
-    const res = await fetch("/api/kids/shop/equip", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itemId: item.id }),
-    });
-    const data = await res.json().catch(() => ({}));
-    setBusyItemId(null);
-    if (!res.ok) {
-      setMessage(data.error ?? "Couldn't equip that.");
-      return;
-    }
-    setEquipped((prev) => ({ ...prev, [item.category as "avatar_accessory" | "shelf_theme" | "pet"]: item.id }));
-  }
-
   const visibleItems = items.filter((i) => i.category === activeCategory);
 
   return (
@@ -94,6 +74,13 @@ export function ShopClient({
         <h1 className="font-kids-display text-2xl font-bold text-slate-900">Shop</h1>
         <span className="rounded-full bg-kids-yellow px-3 py-1.5 text-sm font-bold text-slate-900">✨ {xp} XP</span>
       </div>
+      <p className="mt-1 text-sm text-slate-500">
+        Looking for outfits, hair, or pets? Those moved to{" "}
+        <a href="/kids/character" className="font-semibold text-kids-purple underline">
+          My Character
+        </a>
+        .
+      </p>
 
       <div className="mt-4 flex flex-wrap gap-2">
         {CATEGORY_ORDER.map((c) => (
@@ -116,8 +103,6 @@ export function ShopClient({
         {visibleItems.map((item) => {
           const ownedQty = owned[item.id] ?? 0;
           const canAfford = xp >= item.xp_cost;
-          const isEquippable = EQUIPPABLE.has(item.category);
-          const isEquipped = isEquippable && equipped[item.category as "avatar_accessory" | "shelf_theme" | "pet"] === item.id;
           const busy = busyItemId === item.id;
 
           return (
@@ -136,25 +121,14 @@ export function ShopClient({
                 {ownedQty > 0 && <span className="text-xs font-semibold text-kids-purple">Owned ×{ownedQty}</span>}
               </div>
 
-              {isEquippable && ownedQty > 0 ? (
-                <Button
-                  variant={isEquipped ? "secondary" : "kids"}
-                  className="mt-3 w-full"
-                  disabled={isEquipped || busy}
-                  onClick={() => equip(item)}
-                >
-                  {isEquipped ? "Equipped" : busy ? "Equipping…" : "Equip"}
-                </Button>
-              ) : (
-                <Button
-                  variant="kids"
-                  className={`mt-3 w-full ${!canAfford ? "opacity-40" : ""}`}
-                  disabled={!canAfford || busy}
-                  onClick={() => buy(item)}
-                >
-                  {busy ? "Buying…" : canAfford ? "Buy" : "Not enough XP"}
-                </Button>
-              )}
+              <Button
+                variant="kids"
+                className={`mt-3 w-full ${!canAfford ? "opacity-40" : ""}`}
+                disabled={!canAfford || busy}
+                onClick={() => buy(item)}
+              >
+                {busy ? "Buying…" : canAfford ? "Buy" : "Not enough XP"}
+              </Button>
             </div>
           );
         })}

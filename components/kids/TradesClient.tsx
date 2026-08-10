@@ -6,13 +6,12 @@ import { Button } from "@/components/ui/Button";
 interface CatalogItem {
   id: string;
   name: string;
-  icon_or_asset: string;
+  image_url: string;
   rarity: string;
-  category: string;
+  slot: string;
 }
 interface OwnedItem {
   itemId: string;
-  quantity: number;
   item: CatalogItem | null;
 }
 interface Classmate {
@@ -28,6 +27,14 @@ interface TradeOffer {
   requested_item: CatalogItem | null;
   sender: { id: string; display_name: string } | null;
   receiver: { id: string; display_name: string } | null;
+}
+
+function ItemThumb({ item }: { item: CatalogItem | null }) {
+  if (!item) return null;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- small fixed cosmetic thumbnail
+    <img src={item.image_url} alt={item.name} className="inline-block h-6 w-6 align-middle object-contain" />
+  );
 }
 
 export function TradesClient({
@@ -100,13 +107,13 @@ export function TradesClient({
   return (
     <div>
       <h1 className="font-kids-display text-2xl font-bold text-slate-900">Trades</h1>
-      <p className="mt-1 text-slate-500">Swap cosmetics 1-for-1 with a classmate.</p>
+      <p className="mt-1 text-slate-500">Swap character cosmetics 1-for-1 with a classmate.</p>
 
       {classmates.length === 0 || myItems.length === 0 ? (
         <p className="mt-6 rounded-xl bg-white p-4 text-sm text-slate-500 shadow-sm">
           {classmates.length === 0
             ? "You'll need a classmate linked to trade with."
-            : "You don't own any shop items yet — visit the Shop first!"}
+            : "You don't own any cosmetics yet — visit My Character first!"}
         </p>
       ) : (
         <div className="mt-6 rounded-2xl bg-white p-4 shadow-md">
@@ -130,7 +137,7 @@ export function TradesClient({
             >
               {myItems.map((o) => (
                 <option key={o.itemId} value={o.itemId}>
-                  You give: {o.item?.icon_or_asset} {o.item?.name} (×{o.quantity})
+                  You give: {o.item?.name}
                 </option>
               ))}
             </select>
@@ -141,7 +148,7 @@ export function TradesClient({
             >
               {allItems.map((i) => (
                 <option key={i.id} value={i.id}>
-                  You get: {i.icon_or_asset} {i.name}
+                  You get: {i.name}
                 </option>
               ))}
             </select>
@@ -164,13 +171,9 @@ export function TradesClient({
             <div key={t.id} className="rounded-xl bg-white p-4 shadow-sm">
               <p className="text-sm text-slate-700">
                 <span className="font-semibold">{t.sender?.display_name}</span> offers{" "}
-                <span className="font-semibold">
-                  {t.offered_item?.icon_or_asset} {t.offered_item?.name}
-                </span>{" "}
-                to <span className="font-semibold">{t.receiver?.display_name}</span> for{" "}
-                <span className="font-semibold">
-                  {t.requested_item?.icon_or_asset} {t.requested_item?.name}
-                </span>
+                <ItemThumb item={t.offered_item} /> <span className="font-semibold">{t.offered_item?.name}</span> to{" "}
+                <span className="font-semibold">{t.receiver?.display_name}</span> for{" "}
+                <ItemThumb item={t.requested_item} /> <span className="font-semibold">{t.requested_item?.name}</span>
               </p>
               <div className="mt-2 flex items-center gap-3">
                 <span
