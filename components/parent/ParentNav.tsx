@@ -10,6 +10,7 @@ const links = [
   { href: "/parent/dashboard", label: "Dashboard" },
   { href: "/parent/books", label: "Books" },
   { href: "/parent/book-clubs", label: "Book Clubs" },
+  { href: "/parent/marketplace", label: "Marketplace" },
   { href: "/parent/messages", label: "Messages" },
   { href: "/parent/settings", label: "Settings" },
 ];
