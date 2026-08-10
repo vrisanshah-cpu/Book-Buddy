@@ -14,6 +14,7 @@ const links = [
   { href: "/teacher/book-lists", label: "Book Lists" },
   { href: "/teacher/challenges", label: "Challenges" },
   { href: "/teacher/book-clubs", label: "Book Clubs" },
+  { href: "/teacher/marketplace", label: "Marketplace" },
   { href: "/teacher/messages", label: "Messages" },
   { href: "/teacher/settings", label: "Settings" },
 ];
