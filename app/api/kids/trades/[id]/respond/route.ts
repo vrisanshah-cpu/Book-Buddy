@@ -14,9 +14,9 @@ export async function POST(request: Request, { params }: { params: { id: string 
   }
 
   if (action === "accept") {
-    // accept_trade_offer() (migration 020) does the whole swap atomically
-    // and checks the caller is the receiver itself.
-    const { error } = await supabase.rpc("accept_trade_offer", { p_trade_id: params.id });
+    // accept_cosmetic_trade_offer() (migration 029) does the whole swap
+    // atomically and checks the caller is the receiver itself.
+    const { error } = await supabase.rpc("accept_cosmetic_trade_offer", { p_trade_id: params.id });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     return NextResponse.json({ ok: true });
   }
@@ -25,7 +25,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
   const matchColumn = action === "decline" ? "receiver_id" : "sender_id";
 
   const { error } = await supabase
-    .from("trade_offers")
+    .from("cosmetic_trade_offers")
     .update({ status: newStatus })
     .eq("id", params.id)
     .eq(matchColumn, user.id)

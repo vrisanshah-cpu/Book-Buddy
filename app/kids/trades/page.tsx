@@ -9,10 +9,9 @@ export default async function TradesPage() {
   const supabase = await createClient();
 
   const { data: ownedRows } = await supabase
-    .from("user_shop_items")
-    .select("item_id, quantity, item:shop_items(id, name, icon_or_asset, rarity, category)")
-    .eq("user_id", user.id)
-    .gt("quantity", 0);
+    .from("user_cosmetics")
+    .select("cosmetic_item_id, item:cosmetic_items(id, name, image_url, rarity, slot)")
+    .eq("user_id", user.id);
 
   // Classmates: anyone who shares a classroom with this kid, via
   // teacher_student (same pattern EventsClient-adjacent code already
@@ -39,14 +38,19 @@ export default async function TradesPage() {
     classmates = Array.from(seen.values());
   }
 
-  const { data: allItems } = await supabase.from("shop_items").select("id, name, icon_or_asset, rarity, category");
+  // Starters aren't offered here (everyone already has them for free —
+  // see lib/character.ts) so only non-starter items make sense to
+  // request in a trade.
+  const { data: allItems } = await supabase
+    .from("cosmetic_items")
+    .select("id, name, image_url, rarity, slot")
+    .eq("is_starter", false);
 
   return (
     <TradesClient
       currentUserId={user.id}
       myItems={(ownedRows ?? []).map((r) => ({
-        itemId: r.item_id,
-        quantity: r.quantity,
+        itemId: r.cosmetic_item_id,
         item: Array.isArray(r.item) ? r.item[0] : r.item,
       }))}
       allItems={allItems ?? []}

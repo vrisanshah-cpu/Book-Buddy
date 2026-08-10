@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { getProfile, createClient } from "@/lib/supabase/server";
 import { getLevel, xpProgressInLevel } from "@/lib/xp";
 import { calculateStreak } from "@/lib/reading-stats";
-import { getEquippedCosmetics } from "@/lib/equipped-cosmetics";
+import { resolveEquippedCharacter } from "@/lib/character";
 import { Button } from "@/components/ui/Button";
 import { JoinClassroomCard } from "@/components/kids/JoinClassroomCard";
 import { ParentLinkCodeCard } from "@/components/kids/ParentLinkCodeCard";
@@ -51,7 +51,7 @@ export default async function KidsHomePage() {
   const equippedBadge = ownedBadges.find((b) => b.id === profile?.equipped_badge_id) ?? null;
   const equippedTitle = ownedTitles.find((t) => t.id === profile?.equipped_title_id) ?? null;
   const activeTheme = (profile?.active_theme_config as ThemeConfig | null) ?? null;
-  const cosmetics = await getEquippedCosmetics(supabase, profile);
+  const characterEquipped = await resolveEquippedCharacter(supabase, user.id);
 
   const { data: currentBook } = await supabase
     .from("user_books")
@@ -110,6 +110,7 @@ export default async function KidsHomePage() {
   ];
 
   const shopLinks = [
+    { href: "/kids/character", label: "My Character", emoji: "🧑‍🎨" },
     { href: "/kids/shop", label: "Shop", emoji: "🛍️" },
     { href: "/kids/trades", label: "Trades", emoji: "🔄" },
   ];
@@ -136,13 +137,11 @@ export default async function KidsHomePage() {
             </h1>
           </div>
           <EquippedSlots
-            avatarUrl={profile?.avatar_url ?? null}
+            characterEquipped={characterEquipped}
             ownedBadges={ownedBadges}
             ownedTitles={ownedTitles}
             equippedBadge={equippedBadge}
             equippedTitle={equippedTitle}
-            equippedAccessory={cosmetics.accessory}
-            equippedPet={cosmetics.pet}
           />
         </div>
         <div className="mt-6 flex flex-wrap gap-6">

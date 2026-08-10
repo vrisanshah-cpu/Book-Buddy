@@ -9,9 +9,9 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data: trades } = await supabase
-    .from("trade_offers")
+    .from("cosmetic_trade_offers")
     .select(
-      "id, sender_id, receiver_id, status, created_at, offered_item:shop_items!offered_item_id(id, name, icon_or_asset, rarity), requested_item:shop_items!requested_item_id(id, name, icon_or_asset, rarity), sender:users!sender_id(id, display_name), receiver:users!receiver_id(id, display_name)"
+      "id, sender_id, receiver_id, status, created_at, offered_item:cosmetic_items!offered_item_id(id, name, image_url, rarity), requested_item:cosmetic_items!requested_item_id(id, name, image_url, rarity), sender:users!sender_id(id, display_name), receiver:users!receiver_id(id, display_name)"
     )
     .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
     .order("created_at", { ascending: false });
@@ -35,18 +35,18 @@ export async function POST(request: Request) {
   }
 
   const { data: owned } = await supabase
-    .from("user_shop_items")
-    .select("quantity")
+    .from("user_cosmetics")
+    .select("cosmetic_item_id")
     .eq("user_id", user.id)
-    .eq("item_id", offeredItemId)
+    .eq("cosmetic_item_id", offeredItemId)
     .maybeSingle();
 
-  if (!owned || owned.quantity < 1) {
+  if (!owned) {
     return NextResponse.json({ error: "You don't own the item you're offering" }, { status: 403 });
   }
 
   const { data: trade, error } = await supabase
-    .from("trade_offers")
+    .from("cosmetic_trade_offers")
     .insert({ sender_id: user.id, receiver_id: receiverId, offered_item_id: offeredItemId, requested_item_id: requestedItemId })
     .select()
     .single();
