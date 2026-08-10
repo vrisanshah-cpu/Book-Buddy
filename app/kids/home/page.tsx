@@ -8,6 +8,7 @@ import { getEquippedCosmetics } from "@/lib/equipped-cosmetics";
 import { Button } from "@/components/ui/Button";
 import { JoinClassroomCard } from "@/components/kids/JoinClassroomCard";
 import { ParentLinkCodeCard } from "@/components/kids/ParentLinkCodeCard";
+import { InstitutionWelcomeBanner } from "@/components/kids/InstitutionWelcomeBanner";
 import { ThemeWrapper } from "@/components/kids/ThemeWrapper";
 import { EquippedSlots } from "@/components/kids/EquippedSlots";
 import type { ThemeConfig } from "@/lib/ai-theme";
@@ -68,6 +69,21 @@ export default async function KidsHomePage() {
     .limit(1);
 
   const hasParentLinked = (parentLinks ?? []).length > 0;
+
+  let institution: {
+    name: string;
+    logo_url: string | null;
+    welcome_message: string | null;
+  } | null = null;
+
+  if (profile?.institution_id) {
+    const { data: institutionRow } = await supabase
+      .from("institutions")
+      .select("name, logo_url, welcome_message")
+      .eq("id", profile.institution_id)
+      .maybeSingle();
+    institution = institutionRow ?? null;
+  }
 
   const { data: activeChallenges } = await supabase
     .from("user_challenges")
@@ -157,6 +173,14 @@ export default async function KidsHomePage() {
           />
         </div>
       </ThemeWrapper>
+
+      {institution && (
+        <InstitutionWelcomeBanner
+          name={institution.name}
+          logoUrl={institution.logo_url}
+          welcomeMessage={institution.welcome_message}
+        />
+      )}
 
       <section className="mt-8">
         <h2 className="font-kids-display text-xl font-bold text-slate-900">

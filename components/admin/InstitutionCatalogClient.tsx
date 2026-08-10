@@ -9,7 +9,16 @@ interface Institution {
   name: string;
   code: string;
   type: "school" | "company";
+  logo_url: string | null;
+  welcome_message: string | null;
   bookCount: number;
+}
+
+interface RecentSignup {
+  id: string;
+  display_name: string;
+  created_at: string;
+  institution: { name: string; code: string } | null;
 }
 
 interface ParsedBook {
@@ -73,8 +82,21 @@ function parseCatalogText(text: string): { books: ParsedBook[]; error: string | 
   return { books, error: null };
 }
 
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.round(diffMs / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
 export function InstitutionCatalogClient() {
   const [institutions, setInstitutions] = useState<Institution[]>([]);
+  const [recentSignups, setRecentSignups] = useState<RecentSignup[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState("");
   const [error, setError] = useState("");
@@ -83,6 +105,8 @@ export function InstitutionCatalogClient() {
   const [newName, setNewName] = useState("");
   const [newCode, setNewCode] = useState("");
   const [newType, setNewType] = useState<"school" | "company">("school");
+  const [newLogoUrl, setNewLogoUrl] = useState("");
+  const [newWelcomeMessage, setNewWelcomeMessage] = useState("");
   const [creating, setCreating] = useState(false);
 
   const [catalogText, setCatalogText] = useState("");
@@ -99,6 +123,7 @@ export function InstitutionCatalogClient() {
     const data = await res.json().catch(() => ({}));
     const list: Institution[] = res.ok ? data.institutions ?? [] : [];
     setInstitutions(list);
+    setRecentSignups(res.ok ? data.recentSignups ?? [] : []);
     if (!selectedId && list.length > 0) setSelectedId(list[0].id);
     setLoading(false);
   }
@@ -113,7 +138,14 @@ export function InstitutionCatalogClient() {
     const res = await fetch("/api/admin/institution-catalog", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "create_institution", name: newName.trim(), code: newCode.trim(), type: newType }),
+      body: JSON.stringify({
+        action: "create_institution",
+        name: newName.trim(),
+        code: newCode.trim(),
+        type: newType,
+        logo_url: newLogoUrl.trim() || undefined,
+        welcome_message: newWelcomeMessage.trim() || undefined,
+      }),
     });
     const data = await res.json().catch(() => ({}));
     setCreating(false);
@@ -123,6 +155,8 @@ export function InstitutionCatalogClient() {
     }
     setNewName("");
     setNewCode("");
+    setNewLogoUrl("");
+    setNewWelcomeMessage("");
     await load();
   }
 
@@ -174,6 +208,18 @@ export function InstitutionCatalogClient() {
             <option value="company">Company</option>
           </select>
         </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <Input
+            placeholder="Logo URL (optional)"
+            value={newLogoUrl}
+            onChange={(e) => setNewLogoUrl(e.target.value)}
+          />
+          <Input
+            placeholder="Welcome message (optional)"
+            value={newWelcomeMessage}
+            onChange={(e) => setNewWelcomeMessage(e.target.value)}
+          />
+        </div>
         <Button variant="secondary" className="mt-3" disabled={creating} onClick={createInstitution}>
           {creating ? "Creating…" : "Create institution"}
         </Button>
@@ -215,6 +261,31 @@ export function InstitutionCatalogClient() {
               {uploading ? "Uploading…" : "Upload catalog"}
             </Button>
           </>
+        )}
+      </div>
+
+      <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
+        <h2 className="font-semibold text-admin-primary">Recent signups</h2>
+        <p className="mt-1 text-sm text-admin-muted">Kids who&apos;ve linked a school or company code, most recent first.</p>
+        {loading ? (
+          <p className="mt-2 text-sm text-admin-muted">Loading…</p>
+        ) : recentSignups.length === 0 ? (
+          <p className="mt-2 text-sm text-admin-muted">No one has linked a code yet.</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-slate-100">
+            {recentSignups.map((s) => (
+              <li key={s.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                <div>
+                  <span className="font-medium text-admin-primary">{s.display_name}</span>
+                  <span className="text-admin-muted">
+                    {" "}
+                    joined {s.institution ? `${s.institution.name} (${s.institution.code})` : "an institution"}
+                  </span>
+                </div>
+                <span className="shrink-0 text-xs text-admin-muted">{relativeTime(s.created_at)}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>

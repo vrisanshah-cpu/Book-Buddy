@@ -8,6 +8,18 @@ interface BookRow {
   available_copies?: number;
 }
 
+interface SignupInstitutionRef {
+  name: string;
+  code: string;
+}
+
+interface SignupRow {
+  id: string;
+  display_name: string;
+  created_at: string;
+  institution: SignupInstitutionRef | SignupInstitutionRef[] | null;
+}
+
 async function requireAdmin() {
   const supabase = await createClient();
   const {
@@ -27,7 +39,7 @@ export async function GET() {
 
   const { data: institutions } = await supabase
     .from("institutions")
-    .select("id, name, code, type, created_at")
+    .select("id, name, code, type, logo_url, welcome_message, created_at")
     .order("created_at", { ascending: false });
 
   const { data: bookCounts } = await supabase.from("institution_books").select("institution_id");
@@ -36,8 +48,26 @@ export async function GET() {
     counts.set(row.institution_id, (counts.get(row.institution_id) ?? 0) + 1);
   }
 
+  const { data: signupRows } = await supabase
+    .from("users")
+    .select("id, display_name, created_at, institution:institutions(name, code)")
+    .not("institution_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  const recentSignups = ((signupRows ?? []) as unknown as SignupRow[]).map((row) => {
+    const institution = Array.isArray(row.institution) ? row.institution[0] : row.institution;
+    return {
+      id: row.id,
+      display_name: row.display_name,
+      created_at: row.created_at,
+      institution: institution ?? null,
+    };
+  });
+
   return NextResponse.json({
     institutions: (institutions ?? []).map((i) => ({ ...i, bookCount: counts.get(i.id) ?? 0 })),
+    recentSignups,
   });
 }
 
@@ -48,13 +78,19 @@ export async function POST(request: Request) {
   const body = await request.json();
 
   if (body.action === "create_institution") {
-    const { name, code, type } = body;
+    const { name, code, type, logo_url, welcome_message } = body;
     if (!name?.trim() || !code?.trim() || !["school", "company"].includes(type)) {
       return NextResponse.json({ error: "Missing or invalid fields" }, { status: 400 });
     }
     const { data: institution, error: insertError } = await supabase
       .from("institutions")
-      .insert({ name: name.trim(), code: code.trim(), type })
+      .insert({
+        name: name.trim(),
+        code: code.trim(),
+        type,
+        logo_url: logo_url?.trim() || null,
+        welcome_message: welcome_message?.trim() || null,
+      })
       .select()
       .single();
     if (insertError) return NextResponse.json({ error: insertError.message }, { status: 400 });
