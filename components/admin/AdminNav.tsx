@@ -9,6 +9,8 @@ const links = [
   { href: "/admin/featured-books", label: "Featured Books" },
   { href: "/admin/posts", label: "Posts" },
   { href: "/admin/competitions", label: "Competitions" },
+  { href: "/admin/writing-submissions", label: "Judge Writing Entries" },
+  { href: "/admin/reading-challenges", label: "AI Reading Competitions" },
   { href: "/admin/cosmetics", label: "Character Cosmetics" },
   { href: "/admin/institution-catalog", label: "Institution Catalogs" },
 ];

@@ -19,6 +19,8 @@ interface Submission {
   ai_feedback: string | null;
   community_votes: number;
   is_winner: boolean;
+  stage: "participant" | "semifinalist" | "finalist" | "top_3";
+  score: number | null;
   author: { id: string; display_name: string; equipped_title: { name: string } | null } | null;
 }
 interface Comment {
@@ -34,6 +36,55 @@ const STATUS_LABEL: Record<Competition["status"], string> = {
   judging: "Voting open",
   completed: "Completed",
 };
+const STATUS_GRADIENT: Record<Competition["status"], string> = {
+  draft: "from-slate-400 to-slate-500",
+  active: "from-kids-purple to-violet-500",
+  judging: "from-kids-teal to-cyan-500",
+  completed: "from-kids-yellow to-amber-500",
+};
+const STAGE_LABEL: Record<Submission["stage"], string> = {
+  participant: "Participant",
+  semifinalist: "Semifinalist",
+  finalist: "Finalist",
+  top_3: "🏆 Top 3 Winner",
+};
+const STAGE_STYLES: Record<Submission["stage"], string> = {
+  participant: "bg-slate-100 text-slate-600",
+  semifinalist: "bg-sky-100 text-sky-700",
+  finalist: "bg-violet-100 text-violet-700",
+  top_3: "bg-amber-100 text-amber-700",
+};
+
+/** Ticks down to `target` every second — used for the "time left to submit / vote" clock. */
+function useCountdown(target: string | null) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!target) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [target]);
+  if (!target) return null;
+  const diff = new Date(target).getTime() - now;
+  if (diff <= 0) return "Time's up";
+  const days = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  const minutes = Math.floor((diff % 3600000) / 60000);
+  const seconds = Math.floor((diff % 60000) / 1000);
+  if (days > 0) return `${days}d ${hours}h left`;
+  if (hours > 0) return `${hours}h ${minutes}m left`;
+  return `${minutes}m ${seconds}s left`;
+}
+
+function CountdownBadge({ competition }: { competition: Competition }) {
+  const target = competition.status === "active" ? competition.ends_at : competition.status === "judging" ? competition.ends_at : null;
+  const label = useCountdown(target);
+  if (!label) return null;
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-black/20 px-2.5 py-1 text-xs font-bold text-white">
+      ⏱️ {label}
+    </span>
+  );
+}
 
 export function CompetitionsClient({ currentUserId }: { currentUserId: string }) {
   const [competitions, setCompetitions] = useState<Competition[]>([]);
@@ -132,6 +183,7 @@ export function CompetitionsClient({ currentUserId }: { currentUserId: string })
   }
 
   const myOwnSubmission = submissions.find((s) => s.author?.id === currentUserId);
+  const top3 = [...submissions].filter((s) => s.stage === "top_3").sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
   if (selectedId && selected) {
     return (
@@ -139,9 +191,40 @@ export function CompetitionsClient({ currentUserId }: { currentUserId: string })
         <button type="button" onClick={() => setSelectedId(null)} className="text-sm font-semibold text-kids-purple">
           ← All competitions
         </button>
-        <h1 className="font-kids-display mt-2 text-2xl font-bold text-slate-900">{selected.title}</h1>
-        <p className="mt-1 text-slate-600">{selected.prompt}</p>
+
+        <div className={`mt-3 rounded-2xl bg-gradient-to-br ${STATUS_GRADIENT[selected.status]} p-5 text-white shadow-lg`}>
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="font-kids-display text-2xl font-bold">{selected.title}</h1>
+            <CountdownBadge competition={selected} />
+          </div>
+          <p className="mt-2 text-sm opacity-90">{selected.prompt}</p>
+          {myOwnSubmission && (
+            <span className={`mt-3 inline-block rounded-full px-3 py-1 text-xs font-bold ${STAGE_STYLES[myOwnSubmission.stage]}`}>
+              Your entry: {STAGE_LABEL[myOwnSubmission.stage]}
+            </span>
+          )}
+        </div>
+
         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+
+        {selected.status === "completed" && top3.length > 0 && (
+          <div className="mt-4 rounded-2xl bg-white p-5 shadow-md">
+            <h2 className="font-kids-display text-lg font-bold text-slate-900">🏆 Leaderboard</h2>
+            <div className="mt-3 space-y-2">
+              {top3.map((s, i) => (
+                <div key={s.id} className="flex items-center gap-3 rounded-xl bg-amber-50 p-3">
+                  <span className="text-2xl">{["🥇", "🥈", "🥉"][i] ?? "🏅"}</span>
+                  <div className="flex-1">
+                    <p className="font-semibold text-slate-900">
+                      {s.title} <span className="font-normal text-slate-500">by {s.author?.display_name}</span>
+                    </p>
+                    {s.score !== null && <p className="text-xs text-slate-500">Score: {s.score}/100</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {selected.status === "active" && !myOwnSubmission && (
           <div className="mt-4 rounded-2xl bg-white p-5 shadow-md">
@@ -164,14 +247,21 @@ export function CompetitionsClient({ currentUserId }: { currentUserId: string })
           {submissions.map((s) => (
             <div key={s.id} className="rounded-2xl bg-white p-5 shadow-md">
               <div className="flex items-center justify-between gap-3">
-                <p className="font-semibold text-slate-900">
-                  {s.title}{" "}
-                  <span className="font-normal text-slate-500">
-                    by {s.author?.display_name}
-                    {s.author?.equipped_title && <span className="text-violet-500"> · {s.author.equipped_title.name}</span>}
-                  </span>
-                  {s.is_winner && <span className="ml-2 text-emerald-600">🏆</span>}
-                </p>
+                <div>
+                  <p className="font-semibold text-slate-900">
+                    {s.title}{" "}
+                    <span className="font-normal text-slate-500">
+                      by {s.author?.display_name}
+                      {s.author?.equipped_title && <span className="text-violet-500"> · {s.author.equipped_title.name}</span>}
+                    </span>
+                    {s.is_winner && <span className="ml-2 text-emerald-600">🏆</span>}
+                  </p>
+                  {selected.status !== "active" && (
+                    <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${STAGE_STYLES[s.stage]}`}>
+                      {STAGE_LABEL[s.stage]}
+                    </span>
+                  )}
+                </div>
                 {selected.status === "judging" && s.author?.id !== currentUserId && (
                   <button
                     type="button"
@@ -223,29 +313,33 @@ export function CompetitionsClient({ currentUserId }: { currentUserId: string })
 
   return (
     <div>
-      <h1 className="font-kids-display text-2xl font-bold text-slate-900">Writing Competitions</h1>
-      <div className="mt-4 space-y-3">
-        {loading && <p className="text-sm text-slate-400">Loading…</p>}
-        {!loading && competitions.length === 0 && (
-          <p className="text-sm text-slate-400">No competitions right now — check back soon!</p>
-        )}
-        {competitions.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => openCompetition(c.id)}
-            className="block w-full rounded-2xl bg-white p-5 text-left shadow-md hover:shadow-lg"
-          >
-            <div className="flex items-center justify-between">
-              <p className="font-semibold text-slate-900">{c.title}</p>
-              <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">
-                {STATUS_LABEL[c.status]}
-              </span>
-            </div>
-            <p className="mt-1 text-sm text-slate-500">{c.prompt}</p>
-          </button>
-        ))}
-      </div>
+      <h1 className="font-kids-display text-3xl font-bold text-slate-900">Writing Competitions</h1>
+      {loading ? (
+        <p className="mt-8 text-slate-500">Loading…</p>
+      ) : (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          {competitions.length === 0 && (
+            <p className="col-span-2 text-center text-slate-500">No competitions right now — check back soon!</p>
+          )}
+          {competitions.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => openCompetition(c.id)}
+              className="text-left"
+            >
+              <div className={`rounded-2xl bg-gradient-to-br ${STATUS_GRADIENT[c.status]} p-5 text-white shadow-md transition hover:shadow-lg`}>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="rounded-full bg-black/20 px-2.5 py-1 text-xs font-bold">{STATUS_LABEL[c.status]}</span>
+                  <CountdownBadge competition={c} />
+                </div>
+                <h3 className="font-kids-display mt-3 text-xl font-bold">{c.title}</h3>
+                <p className="mt-1 text-sm opacity-90 line-clamp-2">{c.prompt}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
