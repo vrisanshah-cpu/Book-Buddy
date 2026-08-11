@@ -111,7 +111,7 @@ export function AdminReadingChallengeCreator() {
             </div>
           </div>
           <p className="mt-3 text-xs text-admin-muted">
-            Live now — kids will see this on their Challenges page (or their classroom's, if you scoped it to one).
+            Live now — kids will see this on their Challenges page (or their classroom&apos;s, if you scoped it to one).
           </p>
         </div>
       )}
