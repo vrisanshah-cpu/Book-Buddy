@@ -15,6 +15,20 @@ async function requireAdmin() {
   return { error: null };
 }
 
+type AuthorRow = { id: string; display_name: string; email: string | null };
+type ParentRow = { email: string | null };
+
+// Supabase's generated types sometimes infer an embedded !fk join as
+// array-only even for a to-one relationship, which makes TypeScript treat
+// the non-array branch of Array.isArray(...) as unreachable (`never`) even
+// though it's a real shape at runtime. The unknown-cast sidesteps that
+// false narrowing instead of fighting the generated types.
+function firstOrSelf<T>(value: T | T[] | null | undefined): T | null {
+  const v = value as unknown as T | T[] | null;
+  if (Array.isArray(v)) return v[0] ?? null;
+  return v ?? null;
+}
+
 /**
  * GET /api/admin/writing-submissions/top3-contacts?competitionId=<uuid>
  *
@@ -47,7 +61,7 @@ export async function GET(request: Request) {
 
   const rows = winners ?? [];
   const studentIds = rows
-    .map((w) => (Array.isArray(w.author) ? w.author[0]?.id : w.author?.id))
+    .map((w) => firstOrSelf<AuthorRow>(w.author)?.id)
     .filter((id): id is string => Boolean(id));
 
   const { data: parentLinks } =
@@ -60,7 +74,7 @@ export async function GET(request: Request) {
 
   const parentEmailsByChild = new Map<string, string[]>();
   for (const link of parentLinks ?? []) {
-    const parentEmail = Array.isArray(link.parent) ? link.parent[0]?.email : link.parent?.email;
+    const parentEmail = firstOrSelf<ParentRow>(link.parent)?.email;
     if (!parentEmail) continue;
     const list = parentEmailsByChild.get(link.child_id) ?? [];
     list.push(parentEmail);
@@ -68,7 +82,7 @@ export async function GET(request: Request) {
   }
 
   const contacts = rows.map((w) => {
-    const author = Array.isArray(w.author) ? w.author[0] : w.author;
+    const author = firstOrSelf<AuthorRow>(w.author);
     return {
       submissionId: w.id,
       submissionTitle: w.title,
