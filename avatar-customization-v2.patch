@@ -1,0 +1,795 @@
+From 1b83022d8a5c7ee5c3bc5c80817425cf515debc3 Mon Sep 17 00:00:00 2001
+From: Vrisan Shah <vrisan@example.com>
+Date: Tue, 11 Aug 2026 06:32:10 +0000
+Subject: [PATCH] Avatar customization v2: skin tone, body presets, 5 new
+ cosmetic slots
+
+- New migration 033: skin_tone, avatar_body_type, and equip columns for
+  aura/headwear/eyewear/handheld/shelf_theme, widened slot check constraint,
+  description column on cosmetic_items
+- lib/character.ts: new slots, BODY_TYPE_*/SKIN_TONE_SWATCHES exports,
+  resolveEquippedShelfTheme(), resolveAvatarBase()
+- New route: app/api/kids/character/avatar (POST skin tone / body type)
+- equip + admin cosmetics routes: VALID_SLOTS now derived from SLOT_LABELS
+  instead of separately hardcoded lists
+- CharacterCanvas: renders skin-toned body shape via CSS mask instead of
+  a catalog 'body' item
+- CharacterClient: adds skin tone + body type picker UI
+- home + shelf pages: pass through skinTone/bodyType, shelf theme background
+---
+ app/api/admin/cosmetics/route.ts              |   9 +-
+ app/api/kids/character/avatar/route.ts        |  40 +++++
+ app/api/kids/character/equip/route.ts         |  10 +-
+ app/api/kids/character/route.ts               |  11 +-
+ app/kids/home/page.tsx                        |   4 +-
+ app/kids/shelf/page.tsx                       |  13 +-
+ components/admin/AdminCosmeticsClient.tsx     |   9 ++
+ components/kids/CharacterCanvas.tsx           |  41 ++++-
+ components/kids/CharacterClient.tsx           |  89 ++++++++++-
+ components/kids/EquippedSlots.tsx             |  14 +-
+ lib/character.ts                              | 143 ++++++++++++++++--
+ .../migrations/033_avatar_customization.sql   |  49 ++++++
+ 12 files changed, 397 insertions(+), 35 deletions(-)
+ create mode 100644 app/api/kids/character/avatar/route.ts
+ create mode 100644 supabase/migrations/033_avatar_customization.sql
+
+diff --git a/app/api/admin/cosmetics/route.ts b/app/api/admin/cosmetics/route.ts
+index 2aafc34..57267ba 100644
+--- a/app/api/admin/cosmetics/route.ts
++++ b/app/api/admin/cosmetics/route.ts
+@@ -1,9 +1,12 @@
+ import { NextResponse } from "next/server";
+ import { createClient } from "@/lib/supabase/server";
+ import { createAdminClient } from "@/lib/supabase/admin";
+-import type { CosmeticSlot } from "@/lib/character";
++import { SLOT_LABELS, type CosmeticSlot } from "@/lib/character";
+ 
+-const VALID_SLOTS = new Set<CosmeticSlot>(["background", "body", "hair", "outfit", "accessory", "pet"]);
++// Derived from SLOT_LABELS — see the same comment in
++// app/api/kids/character/equip/route.ts for why this isn't a separately
++// hardcoded list anymore.
++const VALID_SLOTS = new Set<CosmeticSlot>(Object.keys(SLOT_LABELS) as CosmeticSlot[]);
+ 
+ async function requireAdmin() {
+   const supabase = await createClient();
+@@ -40,6 +43,7 @@ export async function POST(request: Request) {
+   const file = form.get("file");
+   const slot = form.get("slot") as string | null;
+   const name = form.get("name") as string | null;
++  const description = (form.get("description") as string | null)?.trim() || null;
+   const rarity = (form.get("rarity") as string | null) ?? "common";
+   const xpCost = Number(form.get("xpCost") ?? 0);
+   const collection = (form.get("collection") as string | null)?.trim() || null;
+@@ -73,6 +77,7 @@ export async function POST(request: Request) {
+     .insert({
+       slot,
+       name: name.trim(),
++      description,
+       image_url: publicUrl,
+       rarity,
+       xp_cost: Number.isFinite(xpCost) ? Math.max(0, Math.round(xpCost)) : 0,
+diff --git a/app/api/kids/character/avatar/route.ts b/app/api/kids/character/avatar/route.ts
+new file mode 100644
+index 0000000..5316e7b
+--- /dev/null
++++ b/app/api/kids/character/avatar/route.ts
+@@ -0,0 +1,40 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { SKIN_TONE_SWATCHES, BODY_TYPE_IMAGE, type AvatarBodyType } from "@/lib/character";
++
++const VALID_BODY_TYPES = Object.keys(BODY_TYPE_IMAGE) as AvatarBodyType[];
++
++export async function POST(request: Request) {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++
++  const { skinTone, bodyType } = (await request.json()) as {
++    skinTone?: string;
++    bodyType?: AvatarBodyType;
++  };
++
++  const update: Record<string, string> = {};
++  if (skinTone !== undefined) {
++    if (!SKIN_TONE_SWATCHES.includes(skinTone)) {
++      return NextResponse.json({ error: "Not a valid skin tone" }, { status: 400 });
++    }
++    update.skin_tone = skinTone;
++  }
++  if (bodyType !== undefined) {
++    if (!VALID_BODY_TYPES.includes(bodyType)) {
++      return NextResponse.json({ error: "Not a valid body type" }, { status: 400 });
++    }
++    update.avatar_body_type = bodyType;
++  }
++  if (Object.keys(update).length === 0) {
++    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
++  }
++
++  // Self-write: users_update_own (migration 001) already permits this.
++  const { error } = await supabase.from("users").update(update).eq("id", user.id);
++  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
++  return NextResponse.json({ ok: true });
++}
+diff --git a/app/api/kids/character/equip/route.ts b/app/api/kids/character/equip/route.ts
+index 91334d1..919afe6 100644
+--- a/app/api/kids/character/equip/route.ts
++++ b/app/api/kids/character/equip/route.ts
+@@ -1,8 +1,12 @@
+ import { NextResponse } from "next/server";
+ import { createClient } from "@/lib/supabase/server";
+-import { EQUIPPED_COLUMN, type CosmeticSlot } from "@/lib/character";
++import { EQUIPPED_COLUMN, SLOT_LABELS, type CosmeticSlot } from "@/lib/character";
+ 
+-const VALID_SLOTS: CosmeticSlot[] = ["background", "body", "hair", "outfit", "accessory", "pet"];
++// Derived from SLOT_LABELS (single source of truth in lib/character.ts)
++// instead of a separately hardcoded list — migration 033 added 5 slots and
++// a duplicated list here would've silently rejected equip requests for all
++// of them until someone remembered to update it too.
++const VALID_SLOTS = new Set<CosmeticSlot>(Object.keys(SLOT_LABELS) as CosmeticSlot[]);
+ 
+ export async function POST(request: Request) {
+   const supabase = await createClient();
+@@ -12,7 +16,7 @@ export async function POST(request: Request) {
+   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+ 
+   const { slot, itemId } = (await request.json()) as { slot: CosmeticSlot; itemId: string | null };
+-  if (!VALID_SLOTS.includes(slot)) {
++  if (!VALID_SLOTS.has(slot)) {
+     return NextResponse.json({ error: "Invalid slot" }, { status: 400 });
+   }
+ 
+diff --git a/app/api/kids/character/route.ts b/app/api/kids/character/route.ts
+index 8328354..33d1b24 100644
+--- a/app/api/kids/character/route.ts
++++ b/app/api/kids/character/route.ts
+@@ -1,6 +1,6 @@
+ import { NextResponse } from "next/server";
+ import { createClient } from "@/lib/supabase/server";
+-import { resolveEquippedCharacter } from "@/lib/character";
++import { resolveEquippedCharacter, resolveEquippedShelfTheme } from "@/lib/character";
+ import type { CosmeticItem } from "@/lib/character";
+ 
+ export async function GET() {
+@@ -10,11 +10,12 @@ export async function GET() {
+   } = await supabase.auth.getUser();
+   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+ 
+-  const [{ data: catalog }, { data: ownedRows }, { data: profile }, equipped] = await Promise.all([
++  const [{ data: catalog }, { data: ownedRows }, { data: profile }, equipped, shelfTheme] = await Promise.all([
+     supabase.from("cosmetic_items").select("*").order("slot").order("sort_order"),
+     supabase.from("user_cosmetics").select("cosmetic_item_id").eq("user_id", user.id),
+-    supabase.from("users").select("xp").eq("id", user.id).single(),
++    supabase.from("users").select("xp, skin_tone, avatar_body_type").eq("id", user.id).single(),
+     resolveEquippedCharacter(supabase, user.id),
++    resolveEquippedShelfTheme(supabase, user.id),
+   ]);
+ 
+   const items = (catalog ?? []) as CosmeticItem[];
+@@ -23,7 +24,9 @@ export async function GET() {
+   return NextResponse.json({
+     items,
+     ownedIds,
+-    equipped,
++    equipped: { ...equipped, shelf_theme: shelfTheme },
+     xp: profile?.xp ?? 0,
++    skinTone: profile?.skin_tone ?? "#F5D0A9",
++    bodyType: profile?.avatar_body_type ?? "default",
+   });
+ }
+diff --git a/app/kids/home/page.tsx b/app/kids/home/page.tsx
+index c1bb0f2..562705e 100644
+--- a/app/kids/home/page.tsx
++++ b/app/kids/home/page.tsx
+@@ -138,6 +138,8 @@ export default async function KidsHomePage() {
+           </div>
+           <EquippedSlots
+             characterEquipped={characterEquipped}
++            skinTone={profile?.skin_tone ?? "#F5D0A9"}
++            bodyType={profile?.avatar_body_type ?? "default"}
+             ownedBadges={ownedBadges}
+             ownedTitles={ownedTitles}
+             equippedBadge={equippedBadge}
+@@ -317,4 +319,4 @@ export default async function KidsHomePage() {
+       </section>
+     </div>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/app/kids/shelf/page.tsx b/app/kids/shelf/page.tsx
+index 70946e8..1dd92ff 100644
+--- a/app/kids/shelf/page.tsx
++++ b/app/kids/shelf/page.tsx
+@@ -1,16 +1,21 @@
+-import { getProfile } from "@/lib/supabase/server";
++import { getProfile, createClient } from "@/lib/supabase/server";
+ import { redirect } from "next/navigation";
+ import { ShelfClient } from "@/components/kids/ShelfClient";
+ import { JoinClassroomCard } from "@/components/kids/JoinClassroomCard";
++import { resolveEquippedShelfTheme } from "@/lib/character";
+ 
+ export default async function KidsShelfPage() {
+   const { user } = await getProfile();
+   if (!user) redirect("/auth/login");
+-
++  const supabase = await createClient();
++  const shelfTheme = await resolveEquippedShelfTheme(supabase, user.id);
+   return (
+-    <>
++    <div
++      className="-mx-4 -my-8 min-h-[calc(100vh-4rem)] bg-cover bg-center px-4 py-8"
++      style={shelfTheme ? { backgroundImage: `url(${shelfTheme.image_url})` } : undefined}
++    >
+       <ShelfClient userId={user.id} />
+       <JoinClassroomCard />
+-    </>
++    </div>
+   );
+ }
+diff --git a/components/admin/AdminCosmeticsClient.tsx b/components/admin/AdminCosmeticsClient.tsx
+index 0c8fe1b..4dcc60e 100644
+--- a/components/admin/AdminCosmeticsClient.tsx
++++ b/components/admin/AdminCosmeticsClient.tsx
+@@ -11,6 +11,7 @@ export function AdminCosmeticsClient() {
+ 
+   const [slot, setSlot] = useState<CosmeticSlot>("hair");
+   const [name, setName] = useState("");
++  const [description, setDescription] = useState("");
+   const [rarity, setRarity] = useState<CosmeticItem["rarity"]>("common");
+   const [xpCost, setXpCost] = useState("100");
+   const [collection, setCollection] = useState("");
+@@ -45,6 +46,7 @@ export function AdminCosmeticsClient() {
+     form.append("file", file);
+     form.append("slot", slot);
+     form.append("name", name.trim());
++    form.append("description", description.trim());
+     form.append("rarity", rarity);
+     form.append("xpCost", xpCost);
+     form.append("collection", collection.trim());
+@@ -58,6 +60,7 @@ export function AdminCosmeticsClient() {
+     }
+     setMessage(`Added "${data.item.name}".`);
+     setName("");
++    setDescription("");
+     setFile(null);
+     if (fileInputRef.current) fileInputRef.current.value = "";
+     await load();
+@@ -89,6 +92,12 @@ export function AdminCosmeticsClient() {
+             ))}
+           </select>
+           <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
++          <Input
++            placeholder="Description (shown to kids in the wardrobe)"
++            value={description}
++            onChange={(e) => setDescription(e.target.value)}
++            className="sm:col-span-2"
++          />
+           <select
+             value={rarity}
+             onChange={(e) => setRarity(e.target.value as CosmeticItem["rarity"])}
+diff --git a/components/kids/CharacterCanvas.tsx b/components/kids/CharacterCanvas.tsx
+index 4e250ca..3627e35 100644
+--- a/components/kids/CharacterCanvas.tsx
++++ b/components/kids/CharacterCanvas.tsx
+@@ -1,22 +1,57 @@
+-import { SLOT_RENDER_ORDER, type CosmeticItem } from "@/lib/character";
++import { SLOT_RENDER_ORDER, BODY_TYPE_IMAGE, type CosmeticItem, type AvatarBodyType } from "@/lib/character";
+ 
+ /**
+  * Every cosmetic image is a transparent PNG on the same 600x800 canvas
+- * (see migration 027's header comment for the full art spec) — so
++ * (see migration 031's header comment for the full art spec) — so
+  * rendering is just stacking <img> tags in z-order, no per-item
+  * positioning math needed. `equipped` only needs one entry per slot that
+  * actually has something equipped; empty slots simply render nothing.
++ *
++ * The body layer is the one exception (migration 033): body *shape* is a
++ * free preset (skinTone + bodyType), not a purchasable cosmetic, so instead
++ * of looking up equipped["body"] (resolveEquippedCharacter always returns
++ * undefined for it now) we render BODY_TYPE_IMAGE[bodyType] directly and
++ * tint it with skinTone via a CSS mask. This assumes the body-shape PNGs
++ * are single-tone silhouettes (alpha channel = shape, everything opaque =
++ * one color) — if the real art ends up multi-toned, swap this for
++ * per-skin-tone image variants instead of a mask tint.
+  */
+ export function CharacterCanvas({
+   equipped,
++  skinTone = "#F5D0A9",
++  bodyType = "default",
+   className = "",
+ }: {
+   equipped: Partial<Record<string, CosmeticItem | null>>;
++  skinTone?: string;
++  bodyType?: AvatarBodyType;
+   className?: string;
+ }) {
+   return (
+     <div className={`relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-slate-100 ${className}`}>
+       {SLOT_RENDER_ORDER.map((slot) => {
++        if (slot === "body") {
++          const bodyImg = BODY_TYPE_IMAGE[bodyType];
++          return (
++            <div
++              key="body"
++              aria-hidden="true"
++              className="absolute inset-0 h-full w-full"
++              style={{
++                backgroundColor: skinTone,
++                WebkitMaskImage: `url(${bodyImg})`,
++                maskImage: `url(${bodyImg})`,
++                WebkitMaskSize: "contain",
++                maskSize: "contain",
++                WebkitMaskRepeat: "no-repeat",
++                maskRepeat: "no-repeat",
++                WebkitMaskPosition: "center",
++                maskPosition: "center",
++              }}
++            />
++          );
++        }
++
+         const item = equipped[slot];
+         if (!item) return null;
+         return (
+@@ -24,7 +59,7 @@ export function CharacterCanvas({
+           <img
+             key={slot}
+             src={item.image_url}
+-            alt={slot === "body" || slot === "hair" || slot === "outfit" ? "" : item.name}
++            alt={slot === "hair" || slot === "outfit" ? "" : item.name}
+             className="absolute inset-0 h-full w-full object-contain"
+             draggable={false}
+           />
+diff --git a/components/kids/CharacterClient.tsx b/components/kids/CharacterClient.tsx
+index b26f8b8..194dc4b 100644
+--- a/components/kids/CharacterClient.tsx
++++ b/components/kids/CharacterClient.tsx
+@@ -3,7 +3,16 @@
+ import { useEffect, useState } from "react";
+ import { Button } from "@/components/ui/Button";
+ import { CharacterCanvas } from "@/components/kids/CharacterCanvas";
+-import { SLOT_TAB_ORDER, SLOT_LABELS, type CosmeticItem, type CosmeticSlot } from "@/lib/character";
++import {
++  SLOT_TAB_ORDER,
++  SLOT_LABELS,
++  SKIN_TONE_SWATCHES,
++  BODY_TYPE_IMAGE,
++  BODY_TYPE_LABELS,
++  type CosmeticItem,
++  type CosmeticSlot,
++  type AvatarBodyType,
++} from "@/lib/character";
+ 
+ const RARITY_STYLES: Record<CosmeticItem["rarity"], string> = {
+   common: "bg-slate-100 text-slate-600",
+@@ -12,14 +21,19 @@ const RARITY_STYLES: Record<CosmeticItem["rarity"], string> = {
+   legendary: "bg-amber-100 text-amber-700",
+ };
+ 
++const BODY_TYPES = Object.keys(BODY_TYPE_IMAGE) as AvatarBodyType[];
++
+ export function CharacterClient() {
+   const [items, setItems] = useState<CosmeticItem[]>([]);
+   const [ownedIds, setOwnedIds] = useState<Set<string>>(new Set());
+   const [equipped, setEquipped] = useState<Partial<Record<CosmeticSlot, CosmeticItem | null>>>({});
++  const [skinTone, setSkinTone] = useState<string>("#F5D0A9");
++  const [bodyType, setBodyType] = useState<AvatarBodyType>("default");
+   const [xp, setXp] = useState(0);
+   const [loading, setLoading] = useState(true);
+   const [activeSlot, setActiveSlot] = useState<CosmeticSlot>("background");
+   const [busyItemId, setBusyItemId] = useState<string | null>(null);
++  const [busyAvatarField, setBusyAvatarField] = useState<"skinTone" | "bodyType" | null>(null);
+   const [message, setMessage] = useState("");
+ 
+   useEffect(() => {
+@@ -35,6 +49,8 @@ export function CharacterClient() {
+       setOwnedIds(new Set(data.ownedIds ?? []));
+       setEquipped(data.equipped ?? {});
+       setXp(data.xp ?? 0);
++      setSkinTone(data.skinTone ?? "#F5D0A9");
++      setBodyType(data.bodyType ?? "default");
+     }
+     setLoading(false);
+   }
+@@ -74,6 +90,32 @@ export function CharacterClient() {
+     setEquipped((prev) => ({ ...prev, [item.slot]: item }));
+   }
+ 
++  // Skin tone / body type are free presets (migration 033), not
++  // cosmetic_items — separate endpoint, separate (optimistic) state update.
++  async function saveAvatarBase(update: { skinTone?: string } | { bodyType?: AvatarBodyType }) {
++    setMessage("");
++    const field = "skinTone" in update ? "skinTone" : "bodyType";
++    const previous = field === "skinTone" ? skinTone : bodyType;
++    setBusyAvatarField(field);
++
++    if (field === "skinTone") setSkinTone((update as { skinTone: string }).skinTone);
++    else setBodyType((update as { bodyType: AvatarBodyType }).bodyType);
++
++    const res = await fetch("/api/kids/character/avatar", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify(update),
++    });
++    setBusyAvatarField(null);
++    if (!res.ok) {
++      const data = await res.json().catch(() => ({}));
++      setMessage(data.error ?? "Couldn't save that.");
++      // Revert the optimistic update.
++      if (field === "skinTone") setSkinTone(previous as string);
++      else setBodyType(previous as AvatarBodyType);
++    }
++  }
++
+   const visibleItems = items.filter((i) => i.slot === activeSlot);
+ 
+   return (
+@@ -84,7 +126,49 @@ export function CharacterClient() {
+       </div>
+ 
+       <div className="mt-4 grid gap-4 sm:grid-cols-[220px_1fr]">
+-        <CharacterCanvas equipped={equipped} />
++        <div>
++          <CharacterCanvas equipped={equipped} skinTone={skinTone} bodyType={bodyType} />
++
++          <div className="mt-4 rounded-2xl bg-white p-3 shadow-md">
++            <p className="text-sm font-semibold text-slate-900">Skin tone</p>
++            <div className="mt-2 flex flex-wrap gap-2">
++              {SKIN_TONE_SWATCHES.map((tone) => (
++                <button
++                  key={tone}
++                  type="button"
++                  aria-label={`Skin tone ${tone}`}
++                  disabled={busyAvatarField === "skinTone"}
++                  onClick={() => saveAvatarBase({ skinTone: tone })}
++                  className={`h-8 w-8 rounded-full border-2 ${
++                    skinTone === tone ? "border-kids-purple" : "border-transparent"
++                  }`}
++                  style={{ backgroundColor: tone }}
++                />
++              ))}
++            </div>
++          </div>
++
++          <div className="mt-3 rounded-2xl bg-white p-3 shadow-md">
++            <p className="text-sm font-semibold text-slate-900">Body type</p>
++            <div className="mt-2 grid grid-cols-2 gap-2">
++              {BODY_TYPES.map((type) => (
++                <button
++                  key={type}
++                  type="button"
++                  disabled={busyAvatarField === "bodyType"}
++                  onClick={() => saveAvatarBase({ bodyType: type })}
++                  className={`rounded-xl border-2 px-2 py-1.5 text-xs font-semibold ${
++                    bodyType === type
++                      ? "border-kids-purple bg-kids-purple/10 text-kids-purple"
++                      : "border-slate-200 text-slate-600"
++                  }`}
++                >
++                  {BODY_TYPE_LABELS[type]}
++                </button>
++              ))}
++            </div>
++          </div>
++        </div>
+ 
+         <div>
+           <div className="flex flex-wrap gap-2">
+@@ -127,6 +211,7 @@ export function CharacterClient() {
+                       {item.rarity}
+                     </span>
+                   </div>
++                  {item.description && <p className="mt-1 text-xs text-slate-500">{item.description}</p>}
+                   {owned ? (
+                     <Button
+                       variant={isEquipped ? "secondary" : "kids"}
+diff --git a/components/kids/EquippedSlots.tsx b/components/kids/EquippedSlots.tsx
+index 7d60b02..23a6fd7 100644
+--- a/components/kids/EquippedSlots.tsx
++++ b/components/kids/EquippedSlots.tsx
+@@ -4,7 +4,7 @@ import { useState } from "react";
+ import Link from "next/link";
+ import { useRouter } from "next/navigation";
+ import { CharacterCanvas } from "@/components/kids/CharacterCanvas";
+-import type { CosmeticItem, CosmeticSlot } from "@/lib/character";
++import type { CosmeticItem, CosmeticSlot, AvatarBodyType } from "@/lib/character";
+ 
+ interface OwnedBadge {
+   id: string;
+@@ -18,6 +18,8 @@ interface OwnedTitle {
+ 
+ export function EquippedSlots({
+   characterEquipped,
++  skinTone = "#F5D0A9",
++  bodyType = "default",
+   ownedBadges,
+   ownedTitles,
+   equippedBadge,
+@@ -25,6 +27,9 @@ export function EquippedSlots({
+ }: {
+   /** From resolveEquippedCharacter() (lib/character.ts) — already has starter fallbacks applied. */
+   characterEquipped: Partial<Record<CosmeticSlot, CosmeticItem | null>>;
++  /** From resolveAvatarBase() (lib/character.ts, migration 033). */
++  skinTone?: string;
++  bodyType?: AvatarBodyType;
+   ownedBadges: OwnedBadge[];
+   ownedTitles: OwnedTitle[];
+   equippedBadge: OwnedBadge | null;
+@@ -50,7 +55,12 @@ export function EquippedSlots({
+     <>
+       <div className="flex items-center gap-3">
+         <Link href="/kids/character" className="block h-14 w-14 shrink-0 overflow-hidden rounded-full bg-white/20" title="Customize your character">
+-          <CharacterCanvas equipped={characterEquipped} className="!aspect-auto !rounded-full" />
++          <CharacterCanvas
++            equipped={characterEquipped}
++            skinTone={skinTone}
++            bodyType={bodyType}
++            className="!aspect-auto !rounded-full"
++          />
+         </Link>
+         <div className="flex flex-col gap-1">
+           <button
+diff --git a/lib/character.ts b/lib/character.ts
+index 19e9044..6581f5c 100644
+--- a/lib/character.ts
++++ b/lib/character.ts
+@@ -1,35 +1,116 @@
+ import type { SupabaseClient } from "@supabase/supabase-js";
+ 
+-export type CosmeticSlot = "background" | "body" | "hair" | "outfit" | "accessory" | "pet";
++export type CosmeticSlot =
++  | "background"
++  | "aura"
++  | "body"
++  | "outfit"
++  | "hair"
++  | "headwear"
++  | "eyewear"
++  | "accessory"
++  | "handheld"
++  | "pet"
++  | "shelf_theme";
++
+ /** Rendering z-order, back to front — see components/kids/CharacterCanvas.tsx. */
+-export const SLOT_RENDER_ORDER: CosmeticSlot[] = ["background", "body", "outfit", "hair", "accessory", "pet"];
++export const SLOT_RENDER_ORDER: CosmeticSlot[] = [
++  "background",
++  "aura",
++  "body",
++  "outfit",
++  "hair",
++  "headwear",
++  "eyewear",
++  "accessory",
++  "handheld",
++  "pet",
++];
+ 
+ /** Order the wardrobe UI presents slot tabs in — background first since it's the easiest/cheapest pick. */
+-export const SLOT_TAB_ORDER: CosmeticSlot[] = ["background", "body", "hair", "outfit", "accessory", "pet"];
++export const SLOT_TAB_ORDER: CosmeticSlot[] = [
++  "background",
++  "aura",
++  "hair",
++  "outfit",
++  "headwear",
++  "eyewear",
++  "accessory",
++  "handheld",
++  "pet",
++  "shelf_theme",
++];
+ 
+ export const SLOT_LABELS: Record<CosmeticSlot, string> = {
+   background: "Background",
++  aura: "Aura",
+   body: "Body",
+-  hair: "Hair",
+   outfit: "Outfit",
++  hair: "Hair",
++  headwear: "Headwear",
++  eyewear: "Eyewear",
+   accessory: "Accessory",
++  handheld: "Handheld",
+   pet: "Pet",
++  shelf_theme: "Shelf Theme",
+ };
+ 
+-/** users.equipped_<slot>_id column name per slot (migration 027). */
++/** users.equipped_<slot>_id column name per slot (migration 031, extended in 033). */
+ export const EQUIPPED_COLUMN: Record<CosmeticSlot, string> = {
+   background: "equipped_background_id",
++  aura: "equipped_aura_id",
+   body: "equipped_body_id",
+-  hair: "equipped_hair_id",
+   outfit: "equipped_outfit_id",
++  hair: "equipped_hair_id",
++  headwear: "equipped_headwear_id",
++  eyewear: "equipped_eyewear_id",
+   accessory: "equipped_accessory_cosmetic_id",
++  handheld: "equipped_handheld_id",
+   pet: "equipped_pet_cosmetic_id",
++  shelf_theme: "equipped_shelf_theme_cosmetic_id",
++};
++
++export type AvatarBodyType = "default" | "tall" | "round" | "petite";
++
++/**
++ * Body *shape* is a free preset toggle (users.avatar_body_type, migration
++ * 033), not a purchasable cosmetic — there was only ever one "body" item
++ * in the shop ("Default", is_starter) before this, so nothing purchasable
++ * is lost by handling shape this way. The old equipped_body_id / "body"
++ * cosmetic slot still exists in the schema for backward compatibility but
++ * is no longer what drives the rendered silhouette.
++ */
++export const BODY_TYPE_LABELS: Record<AvatarBodyType, string> = {
++  default: "Classic",
++  tall: "Tall",
++  round: "Round",
++  petite: "Petite",
++};
++
++export const BODY_TYPE_IMAGE: Record<AvatarBodyType, string> = {
++  default: "/character-starters/body-default.png",
++  tall: "/character-starters/body-tall.png",
++  round: "/character-starters/body-round.png",
++  petite: "/character-starters/body-petite.png",
+ };
+ 
++/** A friendly preset swatch palette, not an arbitrary hex picker — keeps the picker simple and always renders a real skin tone. */
++export const SKIN_TONE_SWATCHES: string[] = [
++  "#FFE0BD",
++  "#F5D0A9",
++  "#E8B784",
++  "#D2996C",
++  "#B37A4C",
++  "#8D5A34",
++  "#6B4226",
++  "#4A2C17",
++];
++
+ export interface CosmeticItem {
+   id: string;
+   slot: CosmeticSlot;
+   name: string;
++  description: string | null;
+   image_url: string;
+   rarity: "common" | "rare" | "epic" | "legendary";
+   xp_cost: number;
+@@ -37,9 +118,11 @@ export interface CosmeticItem {
+   is_starter: boolean;
+ }
+ 
++const EQUIPPED_SELECT_COLUMNS = SLOT_RENDER_ORDER.map((slot) => EQUIPPED_COLUMN[slot]).join(", ");
++
+ /**
+  * Resolves a kid's currently-equipped cosmetic per slot, falling back to
+- * the free starter for slots that have one (body/hair/outfit) and to
++ * the free starter for slots that have one (outfit/hair) and to
+  * "nothing" for the rest — so every kid always has a base look even
+  * before ever visiting /kids/character. Shared between the wardrobe API
+  * route and the homescreen so they never drift out of sync.
+@@ -50,13 +133,7 @@ export async function resolveEquippedCharacter(
+ ): Promise<Partial<Record<CosmeticSlot, CosmeticItem | null>>> {
+   const [{ data: catalog }, { data: profile }] = await Promise.all([
+     supabase.from("cosmetic_items").select("*"),
+-    supabase
+-      .from("users")
+-      .select(
+-        "equipped_background_id, equipped_body_id, equipped_hair_id, equipped_outfit_id, equipped_accessory_cosmetic_id, equipped_pet_cosmetic_id"
+-      )
+-      .eq("id", userId)
+-      .single(),
++    supabase.from("users").select(EQUIPPED_SELECT_COLUMNS).eq("id", userId).single(),
+   ]);
+ 
+   const items = (catalog ?? []) as CosmeticItem[];
+@@ -65,8 +142,46 @@ export async function resolveEquippedCharacter(
+ 
+   const equipped: Partial<Record<CosmeticSlot, CosmeticItem | null>> = {};
+   for (const slot of SLOT_RENDER_ORDER) {
++    if (slot === "body") continue; // body shape is driven by avatar_body_type, not the cosmetic catalog — see resolveAvatarBase()
+     const equippedId = profile?.[EQUIPPED_COLUMN[slot] as keyof typeof profile] as string | null | undefined;
+     equipped[slot] = (equippedId ? byId.get(equippedId) : null) ?? starterBySlot.get(slot) ?? null;
+   }
+   return equipped;
+ }
++
++/**
++ * Resolves a kid's equipped shelf theme (migration 033) — separate from
++ * resolveEquippedCharacter() because shelf_theme renders on the Shelf
++ * page as a background image, not as a layer on the avatar canvas, so
++ * it's excluded from SLOT_RENDER_ORDER.
++ */
++export async function resolveEquippedShelfTheme(
++  supabase: SupabaseClient,
++  userId: string
++): Promise<CosmeticItem | null> {
++  const { data: profile } = await supabase
++    .from("users")
++    .select("equipped_shelf_theme_cosmetic_id")
++    .eq("id", userId)
++    .single();
++  const itemId = profile?.equipped_shelf_theme_cosmetic_id as string | null | undefined;
++  if (!itemId) return null;
++  const { data: item } = await supabase.from("cosmetic_items").select("*").eq("id", itemId).maybeSingle();
++  return (item as CosmeticItem) ?? null;
++}
++
++/** Resolves a kid's skin tone + body type (migration 033), for the base body layer. */
++export async function resolveAvatarBase(
++  supabase: SupabaseClient,
++  userId: string
++): Promise<{ skinTone: string; bodyType: AvatarBodyType }> {
++  const { data } = await supabase
++    .from("users")
++    .select("skin_tone, avatar_body_type")
++    .eq("id", userId)
++    .single();
++  return {
++    skinTone: data?.skin_tone ?? "#F5D0A9",
++    bodyType: (data?.avatar_body_type as AvatarBodyType) ?? "default",
++  };
++}
+diff --git a/supabase/migrations/033_avatar_customization.sql b/supabase/migrations/033_avatar_customization.sql
+new file mode 100644
+index 0000000..289f900
+--- /dev/null
++++ b/supabase/migrations/033_avatar_customization.sql
+@@ -0,0 +1,49 @@
++-- Avatar customization v2 — adds skin tone + body-shape presets, and 5 new
++-- cosmetic slots (aura, headwear, eyewear, handheld, shelf_theme) on top of
++-- migration 031's paper-doll system.
++--
++-- Body *shape* becomes a free preset toggle (skin_tone + avatar_body_type
++-- below) instead of a purchasable cosmetic — there was only ever one "body"
++-- item in the shop ("Default", is_starter), so nothing purchasable is lost.
++-- The 'body' slot stays valid in cosmetic_items for backward compatibility
++-- (existing rows, and the check constraint), but nothing reads
++-- equipped_body_id to drive rendering anymore — see
++-- lib/character.ts:resolveAvatarBase() and components/kids/CharacterCanvas.tsx.
++--
++-- shelf_theme rejoins cosmetic_items (it briefly lived only as a shop_items
++-- category before 031, then was retired). It's equipped and purchased
++-- through the exact same generic flow as every other slot, but excluded
++-- from SLOT_RENDER_ORDER since it paints the Shelf page background, not a
++-- layer on the character canvas — see app/kids/shelf/page.tsx.
++
++alter table public.cosmetic_items drop constraint if exists cosmetic_items_slot_check;
++alter table public.cosmetic_items add constraint cosmetic_items_slot_check
++  check (slot in ('background', 'aura', 'body', 'outfit', 'hair', 'headwear', 'eyewear', 'accessory', 'handheld', 'pet', 'shelf_theme'));
++
++alter table public.cosmetic_items add column if not exists description text;
++
++alter table public.users add column if not exists equipped_aura_id uuid references public.cosmetic_items(id) on delete set null;
++alter table public.users add column if not exists equipped_headwear_id uuid references public.cosmetic_items(id) on delete set null;
++alter table public.users add column if not exists equipped_eyewear_id uuid references public.cosmetic_items(id) on delete set null;
++alter table public.users add column if not exists equipped_handheld_id uuid references public.cosmetic_items(id) on delete set null;
++alter table public.users add column if not exists equipped_shelf_theme_cosmetic_id uuid references public.cosmetic_items(id) on delete set null;
++
++-- Free preset toggles, not tied to cosmetic_items/user_cosmetics at all —
++-- see app/api/kids/character/avatar/route.ts. Skin tone is a hex string
++-- constrained to the 8-swatch palette in lib/character.ts's
++-- SKIN_TONE_SWATCHES so the picker never has to handle an arbitrary color;
++-- update both together if the palette ever changes.
++alter table public.users add column if not exists skin_tone text not null default '#F5D0A9'
++  check (skin_tone in ('#FFE0BD', '#F5D0A9', '#E8B784', '#D2996C', '#B37A4C', '#8D5A34', '#6B4226', '#4A2C17'));
++alter table public.users add column if not exists avatar_body_type text not null default 'default'
++  check (avatar_body_type in ('default', 'tall', 'round', 'petite'));
++
++-- No RLS changes needed: these are plain columns on public.users, already
++-- covered by the users_update_own policy (migration 001) — same as every
++-- other self-service profile field.
++
++-- No starter/launch seed data for the 5 new slots — there's no placeholder
++-- art for them yet (public/character-starters/ only has the original 031
++-- set). Upload some via /admin/cosmetics before these wardrobe tabs will
++-- show anything; the wardrobe already has an empty state for this
++-- ("Nothing here yet — check back for a monthly drop!" in CharacterClient.tsx).
+-- 
+2.43.0
+

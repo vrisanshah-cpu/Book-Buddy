@@ -1,0 +1,136 @@
+[1mdiff --git a/0001-db-BookBuy-marketplace-listings-schema-no-payments-n.patch b/0001-db-BookBuy-marketplace-listings-schema-no-payments-n.patch[m
+[1mdeleted file mode 100644[m
+[1mindex 3cff8f8..0000000[m
+[1m--- a/0001-db-BookBuy-marketplace-listings-schema-no-payments-n.patch[m
+[1m+++ /dev/null[m
+[36m@@ -1,129 +0,0 @@[m
+[31m-From 1fce5aaca5972d72a2a68e1de9436042e30cb5aa Mon Sep 17 00:00:00 2001[m
+[31m-From: Book Buddy Handoff <handoff@bookbuddy.local>[m
+[31m-Date: Sat, 8 Aug 2026 17:56:46 +0000[m
+[31m-Subject: [PATCH 1/6] db: BookBuy marketplace listings schema (no payments, no[m
+[31m- orders)[m
+[31m-MIME-Version: 1.0[m
+[31m-Content-Type: text/plain; charset=UTF-8[m
+[31m-Content-Transfer-Encoding: 8bit[m
+[31m-[m
+[31m-marketplace_listings only — supersedes the earlier Stripe Connect[m
+[31m-design. No marketplace_sellers table, no verification gate: any[m
+[31m-parent/teacher account can list, since Book Buddy never holds or[m
+[31m-routes money in this version. A buyer expresses interest by opening a[m
+[31m-normal conversation with the seller (existing conversations/messages[m
+[31m-from 019_messaging.sql) instead of checking out.[m
+[31m-[m
+[31m-Run this file in the Supabase SQL Editor before deploying — migrations[m
+[31m-in this repo are not auto-applied. Starts at 029, not 016, because the[m
+[31m-repo's migrations already run through 028.[m
+[31m----[m
+[31m- .../migrations/029_marketplace_schema.sql     | 96 +++++++++++++++++++[m
+[31m- 1 file changed, 96 insertions(+)[m
+[31m- create mode 100644 supabase/migrations/029_marketplace_schema.sql[m
+[31m-[m
+[31m-diff --git a/supabase/migrations/029_marketplace_schema.sql b/supabase/migrations/029_marketplace_schema.sql[m
+[31m-new file mode 100644[m
+[31m-index 0000000..3db889b[m
+[31m---- /dev/null[m
+[31m-+++ b/supabase/migrations/029_marketplace_schema.sql[m
+[31m-@@ -0,0 +1,96 @@[m
+[31m-+-- BookBuy Marketplace v2 — listings only, no payments processed through[m
+[31m-+-- Book Buddy (for now). A buyer who wants an item clicks "Express interest,"[m
+[31m-+-- which opens a normal message thread with the seller (reusing[m
+[31m-+-- conversations/messages from migration 019) so the two of them arrange[m
+[31m-+-- payment and delivery themselves, outside the app.[m
+[31m-+--[m
+[31m-+-- This supersedes the earlier Stripe Connect design: no marketplace_sellers[m
+[31m-+-- table, no marketplace_orders table, no seller verification gate — any[m
+[31m-+-- parent/teacher account can list something, since Book Buddy never holds[m
+[31m-+-- or moves money here.[m
+[31m-+--[m
+[31m-+-- NOTE ON NUMBERING: starts at 029 because the repo's migrations already[m
+[31m-+-- run through 028 (028_parent_dashboard_overhaul.sql).[m
+[31m-+--[m
+[31m-+-- Kid safety: no marketplace table is ever readable or writable by a kid[m
+[31m-+-- account — every policy below explicitly requires the caller's own users[m
+[31m-+-- row to have role in ('parent', 'teacher').[m
+[31m-+[m
+[31m-+create table if not exists public.marketplace_listings ([m
+[31m-+  id uuid primary key default gen_random_uuid(),[m
+[31m-+  seller_id uuid not null references public.users(id) on delete cascade,[m
+[31m-+  category text not null check (category in ([m
+[31m-+    'books', 'school_supplies', 'tutoring', 'writing', 'editing', 'coaching', 'collectibles'[m
+[31m-+  )),[m
+[31m-+  title text not null check (char_length(title) between 1 and 140),[m
+[31m-+  description text not null check (char_length(description) between 1 and 4000),[m
+[31m-+  price_cents int not null check (price_cents > 0),[m
+[31m-+  -- Only meaningful for physical goods; nullable for tutoring/coaching/editing/writing.[m
+[31m-+  condition text check (condition in ('new', 'used', 'digital', 'service')),[m
+[31m-+  -- null = unlimited / appointment-based (services). Physical goods get a real count.[m
+[31m-+  quantity_available int check (quantity_available is null or quantity_available >= 0),[m
+[31m-+  photo_urls text[] not null default '{}',[m
+[31m-+  status text not null default 'active' check (status in ('active', 'inactive')),[m
+[31m-+  created_at timestamptz not null default now(),[m
+[31m-+  updated_at timestamptz not null default now()[m
+[31m-+);[m
+[31m-+[m
+[31m-+create index if not exists marketplace_listings_seller_idx on public.marketplace_listings (seller_id);[m
+[31m-+create index if not exists marketplace_listings_browse_idx on public.marketplace_listings (status, category, created_at desc);[m
+[31m-+[m
+[31m-+alter table public.marketplace_listings enable row level security;[m
+[31m-+[m
+[31m-+-- Sellers manage their own listings (any status). Everyone else only ever[m
+[31m-+-- sees active listings — there's no verification concept to gate on[m
+[31m-+-- anymore, since no money moves through the app.[m
+[31m-+drop policy if exists "marketplace_listings_select" on public.marketplace_listings;[m
+[31m-+create policy "marketplace_listings_select" on public.marketplace_listings for select[m
+[31m-+  using (seller_id = auth.uid() or status = 'active');[m
+[31m-+[m
+[31m-+-- with check requires the caller's own role to be parent/teacher, not just[m
+[31m-+-- seller_id = auth.uid() — this is what keeps a kid account from ever[m
+[31m-+-- creating a listing even if the app-level guard were somehow bypassed.[m
+[31m-+drop policy if exists "marketplace_listings_insert_own" on public.marketplace_listings;[m
+[31m-+create policy "marketplace_listings_insert_own" on public.marketplace_listings for insert[m
+[31m-+  with check ([m
+[31m-+    seller_id = auth.uid()[m
+[31m-+    and exists (select 1 from public.users u where u.id = auth.uid() and u.role in ('parent', 'teacher'))[m
+[31m-+  );[m
+[31m-+[m
+[31m-+drop policy if exists "marketplace_listings_update_own" on public.marketplace_listings;[m
+[31m-+create policy "marketplace_listings_update_own" on public.marketplace_listings for update[m
+[31m-+  using (seller_id = auth.uid())[m
+[31m-+  with check (seller_id = auth.uid());[m
+[31m-+[m
+[31m-+-- No delete policy — listings are deactivated (status = 'inactive'), never[m
+[31m-+-- hard-deleted. No delete needed at all here since nothing else (like an[m
+[31m-+-- order) ever references a listing_id in this simplified version.[m
+[31m-+[m
+[31m-+-- =============================================================================[m
+[31m-+-- STORAGE: listing photos[m
+[31m-+-- =============================================================================[m
+[31m-+-- Public read (standard for product photos). Writes are scoped to a[m
+[31m-+-- parent/teacher's own "<user_id>/..." folder.[m
+[31m-+[m
+[31m-+insert into storage.buckets (id, name, public)[m
+[31m-+values ('marketplace-listing-photos', 'marketplace-listing-photos', true)[m
+[31m-+on conflict (id) do nothing;[m
+[31m-+[m
+[31m-+drop policy if exists "marketplace_photos_public_read" on storage.objects;[m
+[31m-+create policy "marketplace_photos_public_read" on storage.objects for select[m
+[31m-+  using (bucket_id = 'marketplace-listing-photos');[m
+[31m-+[m
+[31m-+drop policy if exists "marketplace_photos_seller_write" on storage.objects;[m
+[31m-+create policy "marketplace_photos_seller_write" on storage.objects for insert to authenticated[m
+[31m-+  with check ([m
+[31m-+    bucket_id = 'marketplace-listing-photos'[m
+[31m-+    and (storage.foldername(name))[1] = auth.uid()::text[m
+[31m-+    and exists (select 1 from public.users u where u.id = auth.uid() and u.role in ('parent', 'teacher'))[m
+[31m-+  );[m
+[31m-+[m
+[31m-+drop policy if exists "marketplace_photos_seller_delete" on storage.objects;[m
+[31m-+create policy "marketplace_photos_seller_delete" on storage.objects for delete to authenticated[m
+[31m-+  using ([m
+[31m-+    bucket_id = 'marketplace-listing-photos'[m
+[31m-+    and (storage.foldername(name))[1] = auth.uid()::text[m
+[31m-+  );[m
+[31m--- [m
+[31m-2.43.0[m
+[31m-[m
+[1mdiff --git a/0002-chore-allow-next-image-to-load-marketplace-listing-p.patch b/0002-chore-allow-next-image-to-load-marketplace-listing-p
