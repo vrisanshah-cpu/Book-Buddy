@@ -19,6 +19,12 @@ const VALID_TYPES = ["reading_streak", "books_finished", "minutes_read", "quiz_s
  * Inserts into the existing `challenges` table (migrations 001/008/009/015)
  * rather than a new table — a reading competition IS a challenge; the only
  * new column this needed was `tagline` (migration 034).
+ *
+ * challenges_title_global_unique (migration 011) enforces one global
+ * challenge per exact title. Two things guard against hitting it: recent
+ * titles are excluded from the prompt so the AI doesn't repeat itself, and
+ * a 23505 (Postgres unique-violation) on insert gets caught and turned into
+ * a message the admin can actually act on, instead of a raw constraint name.
  */
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -49,20 +55,43 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Give the AI something to work with (theme, age group, rules, etc.)" }, { status: 400 });
   }
 
+  const admin = createAdminClient();
+  const isGlobal = !classroomId;
+
+  // Only global challenges (classroom_id is null) hit
+  // challenges_title_global_unique, so only fetch/exclude for that case.
+  let recentTitles: string[] = [];
+  if (isGlobal) {
+    const { data: recent } = await admin
+      .from("challenges")
+      .select("title")
+      .is("classroom_id", null)
+      .is("personalized_for", null)
+      .order("id", { ascending: false })
+      .limit(15);
+    recentTitles = (recent ?? []).map((r) => r.title).filter(Boolean);
+  }
+
   let formatted: { title: string; description: string; tagline: string; badge_icon: string };
 
   if (hasGeminiKey()) {
+    const exclusionLine =
+      recentTitles.length > 0
+        ? `\nDo NOT reuse any of these existing titles, or anything nearly identical to them — pick something clearly different even if the theme notes are similar: ${recentTitles.join(", ")}.`
+        : "";
+
     const prompt = `Format a reading competition for a kids' reading app (ages 5-12) from these admin-supplied facts. Do NOT change the numbers — only write the copy.
 Type: ${type}
 Target: ${targetValue}
 Admin notes (theme, age group, rules, anything else): ${rawNotes.trim()}
+${exclusionLine}
 
 Respond with ONLY JSON, no other text, in exactly this shape:
 {"title": string (max 40 chars, punchy), "description": string (max 120 chars, tells the kid exactly what to do to win), "tagline": string (max 60 chars, short and exciting, goes on the banner), "badge_icon": a single emoji}`;
 
     try {
       const raw = await callGemini(
-        "You write short, exciting, age-appropriate copy for reading challenges aimed at kids 5-12. Always respond with strict JSON only. Never invent or change the numeric target you're given.",
+        "You write short, exciting, age-appropriate copy for reading challenges aimed at kids 5-12. Always respond with strict JSON only. Never invent or change the numeric target you're given. Never reuse a title you've been told already exists.",
         [{ role: "user", text: prompt }],
         { jsonMode: true, tier: "lite" }
       );
@@ -74,7 +103,6 @@ Respond with ONLY JSON, no other text, in exactly this shape:
     formatted = fallbackFormat(type, targetValue, rawNotes);
   }
 
-  const admin = createAdminClient();
   const { data: challenge, error } = await admin
     .from("challenges")
     .insert({
@@ -92,7 +120,18 @@ Respond with ONLY JSON, no other text, in exactly this shape:
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    if (error.code === "23505") {
+      return NextResponse.json(
+        {
+          error:
+            "A global challenge with that exact title already exists. Try more specific or different theme notes so the AI generates a different title, or scope this one to a single classroom instead of making it global.",
+        },
+        { status: 409 }
+      );
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
   return NextResponse.json({ challenge, aiUsed: hasGeminiKey() });
 }
@@ -109,7 +148,7 @@ function fallbackFormat(type: string, targetValue: number, rawNotes: string) {
     quiz_score: "quiz score",
   };
   return {
-    title: `${targetValue} ${TYPE_LABEL[type] ?? type}`.slice(0, 40),
+    title: `${targetValue} ${TYPE_LABEL[type] ?? type} — ${Date.now().toString(36).slice(-4)}`.slice(0, 40),
     description: rawNotes.trim().slice(0, 120),
     tagline: "New challenge — go for it!",
     badge_icon: "🏆",
