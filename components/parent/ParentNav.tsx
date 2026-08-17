@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { FeedbackSurveyLauncher } from "@/components/feedback/FeedbackSurveyLauncher";
 import { useUnreadMessageCount } from "@/components/messaging/useUnreadMessageCount";
+import { KofiButton } from "@/components/parent/KofiButton";
 
 const links = [
   { href: "/parent/dashboard", label: "Dashboard" },
@@ -52,6 +53,7 @@ export function ParentNav() {
         ))}
       </nav>
       <FeedbackSurveyLauncher variant="parent" label="Beta feedback" className="mt-4" />
+      <KofiButton className="mt-3" />
       <button
         type="button"
         onClick={signOut}
