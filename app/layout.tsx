@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { Nunito, Fredoka, Plus_Jakarta_Sans, DM_Sans, Lexend } from "next/font/google";
 import { GoogleAnalytics } from "@/components/analytics/GoogleAnalytics";
 import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
@@ -66,6 +67,14 @@ export default function RootLayout({
     >
       <body className="font-sans antialiased">
         <GoogleAnalytics />
+        {process.env.NEXT_PUBLIC_ADSENSE_CLIENT_ID && (
+          <Script
+            async
+            src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${process.env.NEXT_PUBLIC_ADSENSE_CLIENT_ID}`}
+            crossOrigin="anonymous"
+            strategy="afterInteractive"
+          />
+        )}
         <ServiceWorkerRegister />
         {children}
       </body>
