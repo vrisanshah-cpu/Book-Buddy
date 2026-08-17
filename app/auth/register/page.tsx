@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { Input } from "@/components/ui/Input";
@@ -20,8 +20,10 @@ const ROLES: { id: UserRole; label: string; emoji: string; desc: string }[] = [
 
 const AVATARS = ["🦊", "🐼", "🦁", "🐸", "🦄", "🐨", "🐯", "🐰"];
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const referralCode = searchParams.get("ref");
   const supabase = createClient();
 
   const [step, setStep] = useState(1);
@@ -90,6 +92,16 @@ export default function RegisterPage() {
         setLoading(false);
         return;
       }
+    }
+
+    if (referralCode) {
+      await fetch("/api/auth/apply-referral", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: referralCode }),
+      });
+      // Best-effort: an invalid/expired code just means no referral got
+      // recorded, not a reason to block someone finishing signup.
     }
 
     if (role === "teacher") {
@@ -313,5 +325,13 @@ export default function RegisterPage() {
         </Link>
       </p>
     </AuthLayout>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
   );
 }

@@ -3,7 +3,6 @@ import { ShieldCheck, BarChart3, MessagesSquare, BookOpenCheck } from "lucide-re
 import { Button } from "@/components/ui/Button";
 import { FeedbackSurveySection } from "@/components/feedback/FeedbackSurveySection";
 import { FeedbackSurveyLauncher } from "@/components/feedback/FeedbackSurveyLauncher";
-import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
 
 const BOOK_SPINES = [
   { color: "#7C3AED", height: 118, width: 34 },
@@ -38,8 +37,6 @@ const GROWNUP_HIGHLIGHTS = [
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-landing-paper font-kids text-landing-ink">
-      <GoogleAdsense />
-
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <span className="font-kids-display text-2xl font-bold text-kids-purple">
           📚 Book Buddy

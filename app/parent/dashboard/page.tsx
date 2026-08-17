@@ -4,7 +4,7 @@ import { calculateStreak, sumMinutesInRange } from "@/lib/reading-stats";
 import { getLevel } from "@/lib/xp";
 import Link from "next/link";
 import Image from "next/image";
-import { GoogleAdsense } from "@/components/analytics/GoogleAdsense";
+import { AdUnit } from "@/components/analytics/AdUnit";
 
 export default async function ParentDashboardPage() {
   const { profile } = await getProfile();
@@ -84,7 +84,6 @@ export default async function ParentDashboardPage() {
 
   return (
     <div>
-      <GoogleAdsense />
       <h1 className="text-2xl font-bold text-slate-900">Welcome, {profile.display_name}</h1>
       <p className="mt-1 text-parent-muted">Track your children&apos;s reading progress.</p>
 
@@ -178,6 +177,8 @@ export default async function ParentDashboardPage() {
           )
         )}
       </div>
+
+      <AdUnit className="mt-8" />
     </div>
   );
 }
