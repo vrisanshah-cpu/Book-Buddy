@@ -24,7 +24,7 @@ import Script from "next/script";
  * the numeric slot id) before this can actually serve anything. Until
  * then this renders an empty, non-functional (but policy-harmless) unit.
  */
-const AD_SLOT_ID = "REPLACE_WITH_REAL_AD_SLOT_ID";
+const AD_SLOT_ID = process.env.NEXT_PUBLIC_ADSENSE_SLOT_ID || "REPLACE_WITH_REAL_AD_SLOT_ID";
 
 let scriptLoaded = false;
 
