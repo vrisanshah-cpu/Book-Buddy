@@ -1,0 +1,1137 @@
+From 49c0b629fa59612f1242fbb72f31b2e113f78901 Mon Sep 17 00:00:00 2001
+From: Vrisan Shah <vrisan@example.com>
+Date: Tue, 11 Aug 2026 20:30:35 +0000
+Subject: [PATCH] Extend writing contests with stages/scoring/judging + AI
+ reading competition creator
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Applies on top of the avatar-customization-v2 commit — apply that patch
+first if you haven't yet.
+
+- New migration 034: adds stage/score/admin_feedback to the EXISTING
+  writing_submissions table (migration 024) instead of creating a
+  parallel writing_contests table. Also adds tagline to the existing
+  challenges table for the AI reading-competition formatter.
+- Writing contest advancement (Participant -> Semifinalist -> Finalist ->
+  Top 3) is additive alongside the existing official/community winner
+  flow in app/api/competitions/[id]/judge — that route is untouched.
+- New admin judging pipeline: app/admin/writing-submissions (Entry
+  Reader: read full submissions, score, advance stage, leave feedback)
+  plus a Top 3 contact-export panel (admin-only, read-only, scoped to
+  stage='top_3' submissions in one competition — never a bulk PII dump).
+- New admin AI reading-competition creator: app/admin/reading-challenges.
+  Admin supplies the facts (type/target/dates/notes); AI only formats
+  title/description/tagline/badge — it never invents the target number.
+  Inserts into the existing challenges table, not a new one.
+- Student writing-contest hub redesign: card styling matches
+  ChallengesClient's visual language, live countdown to submission/voting
+  deadline, stage badges on entries, and a Top 3 leaderboard once a
+  competition completes.
+- AdminNav: added the two new admin pages.
+---
+ app/admin/reading-challenges/page.tsx         |  10 +
+ app/admin/writing-submissions/page.tsx        |  10 +
+ .../reading-challenges/generate/route.ts      | 117 +++++++
+ .../admin/writing-submissions/[id]/route.ts   |  52 +++
+ app/api/admin/writing-submissions/route.ts    |  52 +++
+ .../top3-contacts/route.ts                    |  84 +++++
+ app/api/competitions/[id]/route.ts            |   2 +-
+ components/admin/AdminNav.tsx                 |   4 +-
+ .../admin/AdminReadingChallengeCreator.tsx    | 120 +++++++
+ components/admin/AdminWritingJudgeClient.tsx  | 305 ++++++++++++++++++
+ components/kids/CompetitionsClient.tsx        | 160 +++++++--
+ ..._writing_contest_stages_and_reading_ai.sql |  33 ++
+ 12 files changed, 914 insertions(+), 35 deletions(-)
+ create mode 100644 app/admin/reading-challenges/page.tsx
+ create mode 100644 app/admin/writing-submissions/page.tsx
+ create mode 100644 app/api/admin/reading-challenges/generate/route.ts
+ create mode 100644 app/api/admin/writing-submissions/[id]/route.ts
+ create mode 100644 app/api/admin/writing-submissions/route.ts
+ create mode 100644 app/api/admin/writing-submissions/top3-contacts/route.ts
+ create mode 100644 components/admin/AdminReadingChallengeCreator.tsx
+ create mode 100644 components/admin/AdminWritingJudgeClient.tsx
+ create mode 100644 supabase/migrations/034_writing_contest_stages_and_reading_ai.sql
+
+diff --git a/app/admin/reading-challenges/page.tsx b/app/admin/reading-challenges/page.tsx
+new file mode 100644
+index 0000000..c47fec0
+--- /dev/null
++++ b/app/admin/reading-challenges/page.tsx
+@@ -0,0 +1,10 @@
++import { redirect } from "next/navigation";
++import { getProfile } from "@/lib/supabase/server";
++import { AdminReadingChallengeCreator } from "@/components/admin/AdminReadingChallengeCreator";
++
++export default async function AdminReadingChallengesPage() {
++  const { user, profile } = await getProfile();
++  if (!user || !profile?.is_admin) redirect("/auth/login");
++
++  return <AdminReadingChallengeCreator />;
++}
+diff --git a/app/admin/writing-submissions/page.tsx b/app/admin/writing-submissions/page.tsx
+new file mode 100644
+index 0000000..b4c9626
+--- /dev/null
++++ b/app/admin/writing-submissions/page.tsx
+@@ -0,0 +1,10 @@
++import { redirect } from "next/navigation";
++import { getProfile } from "@/lib/supabase/server";
++import { AdminWritingJudgeClient } from "@/components/admin/AdminWritingJudgeClient";
++
++export default async function AdminWritingSubmissionsPage() {
++  const { user, profile } = await getProfile();
++  if (!user || !profile?.is_admin) redirect("/auth/login");
++
++  return <AdminWritingJudgeClient />;
++}
+diff --git a/app/api/admin/reading-challenges/generate/route.ts b/app/api/admin/reading-challenges/generate/route.ts
+new file mode 100644
+index 0000000..e5096df
+--- /dev/null
++++ b/app/api/admin/reading-challenges/generate/route.ts
+@@ -0,0 +1,117 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { createAdminClient } from "@/lib/supabase/admin";
++import { callGemini, hasGeminiKey } from "@/lib/gemini";
++
++const VALID_TYPES = ["reading_streak", "books_finished", "minutes_read", "quiz_score"];
++
++/**
++ * POST /api/admin/reading-challenges/generate
++ *
++ * Admin supplies the facts (type, target, dates, freeform notes on theme /
++ * age group / rules); AI only formats them into a title, description,
++ * tagline, and badge emoji — it never invents the target number itself,
++ * so a wrong AI guess can't create a challenge nobody can actually
++ * complete. Same callGemini() pattern as
++ * app/api/challenges/generate-personal, just admin-authored and global
++ * (or classroom-scoped) instead of personalized to one student.
++ *
++ * Inserts into the existing `challenges` table (migrations 001/008/009/015)
++ * rather than a new table — a reading competition IS a challenge; the only
++ * new column this needed was `tagline` (migration 034).
++ */
++export async function POST(request: Request) {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++
++  const { data: profile } = await supabase.from("users").select("is_admin").eq("id", user.id).single();
++  if (!profile?.is_admin) return NextResponse.json({ error: "Admin only" }, { status: 403 });
++
++  const { type, targetValue, rawNotes, startDate, endDate, classroomId } = (await request.json()) as {
++    type?: string;
++    targetValue?: number;
++    rawNotes?: string;
++    startDate?: string | null;
++    endDate?: string | null;
++    classroomId?: string | null;
++  };
++
++  if (!type || !VALID_TYPES.includes(type)) {
++    return NextResponse.json({ error: "Invalid type" }, { status: 400 });
++  }
++  if (!targetValue || !Number.isFinite(targetValue) || targetValue <= 0) {
++    return NextResponse.json({ error: "targetValue must be a positive number" }, { status: 400 });
++  }
++  if (!rawNotes?.trim()) {
++    return NextResponse.json({ error: "Give the AI something to work with (theme, age group, rules, etc.)" }, { status: 400 });
++  }
++
++  let formatted: { title: string; description: string; tagline: string; badge_icon: string };
++
++  if (hasGeminiKey()) {
++    const prompt = `Format a reading competition for a kids' reading app (ages 5-12) from these admin-supplied facts. Do NOT change the numbers — only write the copy.
++Type: ${type}
++Target: ${targetValue}
++Admin notes (theme, age group, rules, anything else): ${rawNotes.trim()}
++
++Respond with ONLY JSON, no other text, in exactly this shape:
++{"title": string (max 40 chars, punchy), "description": string (max 120 chars, tells the kid exactly what to do to win), "tagline": string (max 60 chars, short and exciting, goes on the banner), "badge_icon": a single emoji}`;
++
++    try {
++      const raw = await callGemini(
++        "You write short, exciting, age-appropriate copy for reading challenges aimed at kids 5-12. Always respond with strict JSON only. Never invent or change the numeric target you're given.",
++        [{ role: "user", text: prompt }],
++        { jsonMode: true, tier: "lite" }
++      );
++      formatted = JSON.parse(raw);
++    } catch {
++      formatted = fallbackFormat(type, targetValue, rawNotes);
++    }
++  } else {
++    formatted = fallbackFormat(type, targetValue, rawNotes);
++  }
++
++  const admin = createAdminClient();
++  const { data: challenge, error } = await admin
++    .from("challenges")
++    .insert({
++      title: (formatted.title || "New Reading Challenge").slice(0, 40),
++      description: (formatted.description || rawNotes.trim()).slice(0, 120),
++      tagline: formatted.tagline?.slice(0, 60) ?? null,
++      type,
++      target_value: Math.round(targetValue),
++      badge_icon: formatted.badge_icon || "🏆",
++      created_by: user.id,
++      classroom_id: classroomId || null,
++      start_date: startDate || null,
++      end_date: endDate || null,
++    })
++    .select()
++    .single();
++
++  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
++
++  return NextResponse.json({ challenge, aiUsed: hasGeminiKey() });
++}
++
++// Used when no Gemini key is configured, or the AI call/parse fails —
++// same "demo-quiz"-style graceful fallback the rest of the app already
++// leans on (see lib/demo-quiz.ts) rather than blocking challenge creation
++// on AI availability.
++function fallbackFormat(type: string, targetValue: number, rawNotes: string) {
++  const TYPE_LABEL: Record<string, string> = {
++    reading_streak: "day reading streak",
++    books_finished: "books finished",
++    minutes_read: "minutes read",
++    quiz_score: "quiz score",
++  };
++  return {
++    title: `${targetValue} ${TYPE_LABEL[type] ?? type}`.slice(0, 40),
++    description: rawNotes.trim().slice(0, 120),
++    tagline: "New challenge — go for it!",
++    badge_icon: "🏆",
++  };
++}
+diff --git a/app/api/admin/writing-submissions/[id]/route.ts b/app/api/admin/writing-submissions/[id]/route.ts
+new file mode 100644
+index 0000000..42ea82e
+--- /dev/null
++++ b/app/api/admin/writing-submissions/[id]/route.ts
+@@ -0,0 +1,52 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { createAdminClient } from "@/lib/supabase/admin";
++
++const VALID_STAGES = ["participant", "semifinalist", "finalist", "top_3"];
++
++export async function PATCH(request: Request, { params }: { params: { id: string } }) {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++
++  const { data: profile } = await supabase.from("users").select("is_admin").eq("id", user.id).single();
++  if (!profile?.is_admin) return NextResponse.json({ error: "Admin only" }, { status: 403 });
++
++  const { stage, score, adminFeedback } = (await request.json()) as {
++    stage?: string;
++    score?: number | null;
++    adminFeedback?: string | null;
++  };
++
++  const update: Record<string, unknown> = {};
++  if (stage !== undefined) {
++    if (!VALID_STAGES.includes(stage)) return NextResponse.json({ error: "Invalid stage" }, { status: 400 });
++    update.stage = stage;
++  }
++  if (score !== undefined) {
++    if (score !== null && (!Number.isFinite(score) || score < 0 || score > 100)) {
++      return NextResponse.json({ error: "Score must be between 0 and 100" }, { status: 400 });
++    }
++    update.score = score;
++  }
++  if (adminFeedback !== undefined) {
++    update.admin_feedback = adminFeedback?.trim() || null;
++  }
++  if (Object.keys(update).length === 0) {
++    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
++  }
++
++  const admin = createAdminClient();
++  const { data: submission, error } = await admin
++    .from("writing_submissions")
++    .update(update)
++    .eq("id", params.id)
++    .select("id, stage, score, admin_feedback")
++    .single();
++
++  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
++
++  return NextResponse.json({ submission });
++}
+diff --git a/app/api/admin/writing-submissions/route.ts b/app/api/admin/writing-submissions/route.ts
+new file mode 100644
+index 0000000..50d63b5
+--- /dev/null
++++ b/app/api/admin/writing-submissions/route.ts
+@@ -0,0 +1,52 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { createAdminClient } from "@/lib/supabase/admin";
++
++async function requireAdmin() {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
++
++  const { data: profile } = await supabase.from("users").select("is_admin").eq("id", user.id).single();
++  if (!profile?.is_admin) return { error: NextResponse.json({ error: "Admin only" }, { status: 403 }) };
++
++  return { error: null };
++}
++
++// GET /api/admin/writing-submissions?competitionId=<uuid> — the Entry
++// Reader's data source. Uses the admin client (bypasses RLS) purely so
++// admins can also read submissions on 'draft' competitions, which the
++// regular writing_submissions_select policy (024) hides from everyone —
++// admins should be able to preview entries before a contest goes live.
++export async function GET(request: Request) {
++  const { error } = await requireAdmin();
++  if (error) return error;
++
++  const url = new URL(request.url);
++  const competitionId = url.searchParams.get("competitionId");
++  if (!competitionId) return NextResponse.json({ error: "Missing competitionId" }, { status: 400 });
++
++  const admin = createAdminClient();
++
++  const { data: competition } = await admin
++    .from("writing_competitions")
++    .select("id, title, status")
++    .eq("id", competitionId)
++    .maybeSingle();
++  if (!competition) return NextResponse.json({ error: "Competition not found" }, { status: 404 });
++
++  const { data: submissions, error: fetchError } = await admin
++    .from("writing_submissions")
++    .select(
++      "id, title, content, ai_feedback, community_votes, is_winner, stage, score, admin_feedback, created_at, author:users!author_id(id, display_name, email)"
++    )
++    .eq("competition_id", competitionId)
++    .order("score", { ascending: false, nullsFirst: false })
++    .order("community_votes", { ascending: false });
++
++  if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
++
++  return NextResponse.json({ competition, submissions: submissions ?? [] });
++}
+diff --git a/app/api/admin/writing-submissions/top3-contacts/route.ts b/app/api/admin/writing-submissions/top3-contacts/route.ts
+new file mode 100644
+index 0000000..27841bc
+--- /dev/null
++++ b/app/api/admin/writing-submissions/top3-contacts/route.ts
+@@ -0,0 +1,84 @@
++import { NextResponse } from "next/server";
++import { createClient } from "@/lib/supabase/server";
++import { createAdminClient } from "@/lib/supabase/admin";
++
++async function requireAdmin() {
++  const supabase = await createClient();
++  const {
++    data: { user },
++  } = await supabase.auth.getUser();
++  if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
++
++  const { data: profile } = await supabase.from("users").select("is_admin").eq("id", user.id).single();
++  if (!profile?.is_admin) return { error: NextResponse.json({ error: "Admin only" }, { status: 403 }) };
++
++  return { error: null };
++}
++
++/**
++ * GET /api/admin/writing-submissions/top3-contacts?competitionId=<uuid>
++ *
++ * Admin-only, read-only. Returns contact details ONLY for submissions
++ * already marked stage='top_3' in this specific competition — never a
++ * bulk export of student/parent contact info, and never anything beyond
++ * what's needed to coordinate a prize for a named winner. Parent contact
++ * comes from the existing parent_child link (migration 001); a student
++ * with no linked parent just gets an empty parentEmails array rather than
++ * blocking the export.
++ */
++export async function GET(request: Request) {
++  const { error } = await requireAdmin();
++  if (error) return error;
++
++  const url = new URL(request.url);
++  const competitionId = url.searchParams.get("competitionId");
++  if (!competitionId) return NextResponse.json({ error: "Missing competitionId" }, { status: 400 });
++
++  const admin = createAdminClient();
++
++  const { data: winners, error: fetchError } = await admin
++    .from("writing_submissions")
++    .select("id, title, score, author:users!author_id(id, display_name, email)")
++    .eq("competition_id", competitionId)
++    .eq("stage", "top_3")
++    .order("score", { ascending: false, nullsFirst: false });
++
++  if (fetchError) return NextResponse.json({ error: fetchError.message }, { status: 500 });
++
++  const rows = winners ?? [];
++  const studentIds = rows
++    .map((w) => (Array.isArray(w.author) ? w.author[0]?.id : w.author?.id))
++    .filter((id): id is string => Boolean(id));
++
++  const { data: parentLinks } =
++    studentIds.length > 0
++      ? await admin
++          .from("parent_child")
++          .select("child_id, parent:users!parent_id(email)")
++          .in("child_id", studentIds)
++      : { data: [] };
++
++  const parentEmailsByChild = new Map<string, string[]>();
++  for (const link of parentLinks ?? []) {
++    const parentEmail = Array.isArray(link.parent) ? link.parent[0]?.email : link.parent?.email;
++    if (!parentEmail) continue;
++    const list = parentEmailsByChild.get(link.child_id) ?? [];
++    list.push(parentEmail);
++    parentEmailsByChild.set(link.child_id, list);
++  }
++
++  const contacts = rows.map((w) => {
++    const author = Array.isArray(w.author) ? w.author[0] : w.author;
++    return {
++      submissionId: w.id,
++      submissionTitle: w.title,
++      score: w.score,
++      studentId: author?.id ?? null,
++      studentName: author?.display_name ?? "Unknown",
++      studentEmail: author?.email ?? null,
++      parentEmails: author?.id ? parentEmailsByChild.get(author.id) ?? [] : [],
++    };
++  });
++
++  return NextResponse.json({ contacts });
++}
+diff --git a/app/api/competitions/[id]/route.ts b/app/api/competitions/[id]/route.ts
+index 03732b6..a0510d6 100644
+--- a/app/api/competitions/[id]/route.ts
++++ b/app/api/competitions/[id]/route.ts
+@@ -19,7 +19,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
+   const { data: submissions } = await supabase
+     .from("writing_submissions")
+     .select(
+-      "id, title, content, ai_feedback, community_votes, is_winner, created_at, author:users!author_id(id, display_name, equipped_title:titles!equipped_title_id(name))"
++      "id, title, content, ai_feedback, community_votes, is_winner, stage, score, created_at, author:users!author_id(id, display_name, equipped_title:titles!equipped_title_id(name))"
+     )
+     .eq("competition_id", params.id)
+     .order("community_votes", { ascending: false });
+diff --git a/components/admin/AdminNav.tsx b/components/admin/AdminNav.tsx
+index aad1df6..da32ebb 100644
+--- a/components/admin/AdminNav.tsx
++++ b/components/admin/AdminNav.tsx
+@@ -9,6 +9,8 @@ const links = [
+   { href: "/admin/featured-books", label: "Featured Books" },
+   { href: "/admin/posts", label: "Posts" },
+   { href: "/admin/competitions", label: "Competitions" },
++  { href: "/admin/writing-submissions", label: "Judge Writing Entries" },
++  { href: "/admin/reading-challenges", label: "AI Reading Competitions" },
+   { href: "/admin/cosmetics", label: "Character Cosmetics" },
+   { href: "/admin/institution-catalog", label: "Institution Catalogs" },
+ ];
+@@ -52,4 +54,4 @@ export function AdminNav() {
+       </button>
+     </aside>
+   );
+-}
+\ No newline at end of file
++}
+diff --git a/components/admin/AdminReadingChallengeCreator.tsx b/components/admin/AdminReadingChallengeCreator.tsx
+new file mode 100644
+index 0000000..b9be0f6
+--- /dev/null
++++ b/components/admin/AdminReadingChallengeCreator.tsx
+@@ -0,0 +1,120 @@
++"use client";
++
++import { useState } from "react";
++import { Button } from "@/components/ui/Button";
++import { Input } from "@/components/ui/Input";
++
++interface CreatedChallenge {
++  id: string;
++  title: string;
++  description: string | null;
++  tagline: string | null;
++  badge_icon: string | null;
++  target_value: number;
++  type: string;
++}
++
++const TYPE_OPTIONS = [
++  { value: "reading_streak", label: "Reading streak (days in a row)" },
++  { value: "books_finished", label: "Books finished" },
++  { value: "minutes_read", label: "Minutes read" },
++  { value: "quiz_score", label: "Quiz score" },
++];
++
++export function AdminReadingChallengeCreator() {
++  const [type, setType] = useState("books_finished");
++  const [targetValue, setTargetValue] = useState("5");
++  const [rawNotes, setRawNotes] = useState("");
++  const [startDate, setStartDate] = useState("");
++  const [endDate, setEndDate] = useState("");
++  const [generating, setGenerating] = useState(false);
++  const [error, setError] = useState("");
++  const [created, setCreated] = useState<CreatedChallenge | null>(null);
++  const [aiUsed, setAiUsed] = useState(true);
++
++  async function generate() {
++    setError("");
++    setCreated(null);
++    setGenerating(true);
++    const res = await fetch("/api/admin/reading-challenges/generate", {
++      method: "POST",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({
++        type,
++        targetValue: Number(targetValue),
++        rawNotes: rawNotes.trim(),
++        startDate: startDate || null,
++        endDate: endDate || null,
++      }),
++    });
++    const data = await res.json().catch(() => ({}));
++    setGenerating(false);
++    if (!res.ok) {
++      setError(data.error ?? "Couldn't generate that.");
++      return;
++    }
++    setCreated(data.challenge);
++    setAiUsed(data.aiUsed);
++    setRawNotes("");
++  }
++
++  return (
++    <div>
++      <h1 className="text-2xl font-bold text-admin-primary">AI Reading Competition Creator</h1>
++      <p className="mt-1 text-admin-muted">
++        Give the facts — type, target, dates, theme notes — and the AI writes the title, description, tagline, and badge. It
++        never changes the numbers, only the copy.
++      </p>
++
++      <div className="mt-6 grid gap-3 rounded-xl bg-white p-6 shadow-sm sm:grid-cols-2">
++        <select
++          value={type}
++          onChange={(e) => setType(e.target.value)}
++          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-slate-400 focus:ring-2"
++        >
++          {TYPE_OPTIONS.map((t) => (
++            <option key={t.value} value={t.value}>
++              {t.label}
++            </option>
++          ))}
++        </select>
++        <Input type="number" min={1} placeholder="Target value" value={targetValue} onChange={(e) => setTargetValue(e.target.value)} />
++        <Input label="Start date (optional)" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
++        <Input label="End date (optional)" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
++        <textarea
++          value={rawNotes}
++          onChange={(e) => setRawNotes(e.target.value)}
++          placeholder="Theme, age group, tone, any rules — e.g. 'Halloween-themed, grades 3-5, spooky books count double, encouraging tone'"
++          rows={4}
++          className="sm:col-span-2 w-full rounded-xl border border-slate-200 px-4 py-2.5 outline-none focus:border-violet-400 focus:ring-2"
++        />
++        {error && <p className="text-sm text-red-600 sm:col-span-2">{error}</p>}
++        <Button className="sm:col-span-2" disabled={generating || !rawNotes.trim()} onClick={generate}>
++          {generating ? "Generating…" : "Generate & create competition"}
++        </Button>
++      </div>
++
++      {created && (
++        <div className="mt-6 rounded-xl bg-white p-6 shadow-sm">
++          <p className="text-xs font-semibold uppercase text-admin-muted">
++            {aiUsed ? "AI-generated" : "Created with fallback copy (no AI key configured)"}
++          </p>
++          <div className="mt-2 flex items-start gap-3">
++            <span className="text-4xl">{created.badge_icon ?? "🏆"}</span>
++            <div>
++              <h2 className="font-bold text-admin-primary">{created.title}</h2>
++              {created.tagline && <p className="text-sm font-semibold text-violet-600">{created.tagline}</p>}
++              <p className="mt-1 text-sm text-admin-muted">{created.description}</p>
++              <p className="mt-1 text-xs text-admin-muted">
++                Target: {created.target_value} · {created.type.replace("_", " ")}
++              </p>
++            </div>
++          </div>
++          <p className="mt-3 text-xs text-admin-muted">
++            Live now — kids will see this on their Challenges page (or their classroom's, if you scoped it to one).
++          </p>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/components/admin/AdminWritingJudgeClient.tsx b/components/admin/AdminWritingJudgeClient.tsx
+new file mode 100644
+index 0000000..e9a16d6
+--- /dev/null
++++ b/components/admin/AdminWritingJudgeClient.tsx
+@@ -0,0 +1,305 @@
++"use client";
++
++import { useEffect, useState } from "react";
++import { Button } from "@/components/ui/Button";
++
++interface Competition {
++  id: string;
++  title: string;
++  status: "draft" | "active" | "judging" | "completed";
++}
++interface Submission {
++  id: string;
++  title: string;
++  content: string;
++  ai_feedback: string | null;
++  community_votes: number;
++  is_winner: boolean;
++  stage: "participant" | "semifinalist" | "finalist" | "top_3";
++  score: number | null;
++  admin_feedback: string | null;
++  created_at: string;
++  author: { id: string; display_name: string; email: string | null } | null;
++}
++interface Contact {
++  submissionId: string;
++  submissionTitle: string;
++  score: number | null;
++  studentId: string | null;
++  studentName: string;
++  studentEmail: string | null;
++  parentEmails: string[];
++}
++
++const STAGE_LABEL: Record<Submission["stage"], string> = {
++  participant: "Participant",
++  semifinalist: "Semifinalist",
++  finalist: "Finalist",
++  top_3: "Top 3 Winner",
++};
++const STAGE_ORDER: Submission["stage"][] = ["participant", "semifinalist", "finalist", "top_3"];
++const STAGE_STYLES: Record<Submission["stage"], string> = {
++  participant: "bg-slate-100 text-slate-600",
++  semifinalist: "bg-sky-100 text-sky-700",
++  finalist: "bg-violet-100 text-violet-700",
++  top_3: "bg-amber-100 text-amber-700",
++};
++
++export function AdminWritingJudgeClient() {
++  const [competitions, setCompetitions] = useState<Competition[]>([]);
++  const [competitionId, setCompetitionId] = useState<string>("");
++  const [submissions, setSubmissions] = useState<Submission[]>([]);
++  const [stageFilter, setStageFilter] = useState<Submission["stage"] | "all">("all");
++  const [loading, setLoading] = useState(false);
++  const [openId, setOpenId] = useState<string | null>(null);
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState("");
++
++  const [draftScore, setDraftScore] = useState("");
++  const [draftFeedback, setDraftFeedback] = useState("");
++  const [draftStage, setDraftStage] = useState<Submission["stage"]>("participant");
++
++  const [contacts, setContacts] = useState<Contact[] | null>(null);
++  const [loadingContacts, setLoadingContacts] = useState(false);
++
++  useEffect(() => {
++    void loadCompetitions();
++  }, []);
++
++  useEffect(() => {
++    if (competitionId) void loadSubmissions(competitionId);
++    else setSubmissions([]);
++    setOpenId(null);
++    setContacts(null);
++  }, [competitionId]);
++
++  async function loadCompetitions() {
++    const res = await fetch("/api/competitions");
++    const data = await res.json().catch(() => ({}));
++    if (res.ok) setCompetitions(data.competitions ?? []);
++  }
++
++  async function loadSubmissions(id: string) {
++    setLoading(true);
++    setError("");
++    const res = await fetch(`/api/admin/writing-submissions?competitionId=${id}`);
++    const data = await res.json().catch(() => ({}));
++    if (res.ok) setSubmissions(data.submissions ?? []);
++    else setError(data.error ?? "Couldn't load submissions.");
++    setLoading(false);
++  }
++
++  function openEntry(s: Submission) {
++    setOpenId(s.id);
++    setDraftScore(s.score?.toString() ?? "");
++    setDraftFeedback(s.admin_feedback ?? "");
++    setDraftStage(s.stage);
++  }
++
++  async function save(id: string) {
++    setSaving(true);
++    setError("");
++    const score = draftScore.trim() === "" ? null : Number(draftScore);
++    const res = await fetch(`/api/admin/writing-submissions/${id}`, {
++      method: "PATCH",
++      headers: { "Content-Type": "application/json" },
++      body: JSON.stringify({ stage: draftStage, score, adminFeedback: draftFeedback }),
++    });
++    const data = await res.json().catch(() => ({}));
++    setSaving(false);
++    if (!res.ok) {
++      setError(data.error ?? "Couldn't save that.");
++      return;
++    }
++    setSubmissions((prev) =>
++      prev.map((s) => (s.id === id ? { ...s, stage: draftStage, score, admin_feedback: draftFeedback || null } : s))
++    );
++    setOpenId(null);
++  }
++
++  async function loadContacts() {
++    if (!competitionId) return;
++    setLoadingContacts(true);
++    const res = await fetch(`/api/admin/writing-submissions/top3-contacts?competitionId=${competitionId}`);
++    const data = await res.json().catch(() => ({}));
++    setLoadingContacts(false);
++    if (res.ok) setContacts(data.contacts ?? []);
++  }
++
++  function downloadContactsCsv() {
++    if (!contacts || contacts.length === 0) return;
++    const header = "Student Name,Student Email,Parent Email(s),Submission Title,Score";
++    const rows = contacts.map((c) =>
++      [c.studentName, c.studentEmail ?? "", c.parentEmails.join("; "), c.submissionTitle, c.score ?? ""]
++        .map((v) => `"${String(v).replace(/"/g, '""')}"`)
++        .join(",")
++    );
++    const csv = [header, ...rows].join("\n");
++    const blob = new Blob([csv], { type: "text/csv" });
++    const url = URL.createObjectURL(blob);
++    const a = document.createElement("a");
++    a.href = url;
++    a.download = "top3-winners-contacts.csv";
++    a.click();
++    URL.revokeObjectURL(url);
++  }
++
++  const visible = submissions.filter((s) => stageFilter === "all" || s.stage === stageFilter);
++  const openSubmission = submissions.find((s) => s.id === openId) ?? null;
++
++  return (
++    <div>
++      <h1 className="text-2xl font-bold text-admin-primary">Judge Writing Entries</h1>
++      <p className="mt-1 text-admin-muted">Read submissions, score them, and move entries through Participant → Semifinalist → Finalist → Top 3.</p>
++
++      <div className="mt-4 flex flex-wrap items-center gap-3">
++        <select
++          value={competitionId}
++          onChange={(e) => setCompetitionId(e.target.value)}
++          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-slate-400 focus:ring-2"
++        >
++          <option value="">Select a competition…</option>
++          {competitions.map((c) => (
++            <option key={c.id} value={c.id}>
++              {c.title} ({c.status})
++            </option>
++          ))}
++        </select>
++
++        {competitionId && (
++          <div className="flex flex-wrap gap-2">
++            {(["all", ...STAGE_ORDER] as const).map((s) => (
++              <button
++                key={s}
++                type="button"
++                onClick={() => setStageFilter(s)}
++                className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
++                  stageFilter === s ? "bg-admin-primary text-white" : "bg-white text-slate-600 shadow-sm"
++                }`}
++              >
++                {s === "all" ? "All" : STAGE_LABEL[s]}
++              </button>
++            ))}
++          </div>
++        )}
++      </div>
++
++      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
++
++      {competitionId && (
++        <div className="mt-4 rounded-xl bg-white p-4 shadow-sm">
++          <div className="flex items-center justify-between">
++            <p className="font-semibold text-admin-primary">Top 3 prize contacts</p>
++            <div className="flex gap-2">
++              <Button variant="secondary" disabled={loadingContacts} onClick={loadContacts}>
++                {loadingContacts ? "Loading…" : "Load top 3 contacts"}
++              </Button>
++              {contacts && contacts.length > 0 && (
++                <Button variant="secondary" onClick={downloadContactsCsv}>
++                  Download CSV
++                </Button>
++              )}
++            </div>
++          </div>
++          {contacts && contacts.length === 0 && (
++            <p className="mt-2 text-sm text-admin-muted">No submissions are marked Top 3 for this competition yet.</p>
++          )}
++          {contacts && contacts.length > 0 && (
++            <div className="mt-3 space-y-2">
++              {contacts.map((c) => (
++                <div key={c.submissionId} className="rounded-lg border border-slate-100 p-3 text-sm">
++                  <p className="font-semibold text-admin-primary">
++                    {c.studentName} — &quot;{c.submissionTitle}&quot; {c.score !== null && <span className="text-admin-muted">({c.score}/100)</span>}
++                  </p>
++                  <p className="text-admin-muted">Student: {c.studentEmail ?? "no email on file"}</p>
++                  <p className="text-admin-muted">
++                    Parent(s): {c.parentEmails.length > 0 ? c.parentEmails.join(", ") : "no parent linked"}
++                  </p>
++                </div>
++              ))}
++            </div>
++          )}
++        </div>
++      )}
++
++      <div className="mt-4 space-y-2">
++        {loading && <p className="text-sm text-admin-muted">Loading…</p>}
++        {!loading && competitionId && visible.length === 0 && (
++          <p className="text-sm text-admin-muted">No entries at this stage.</p>
++        )}
++        {visible.map((s) => (
++          <div key={s.id} className="rounded-xl bg-white p-4 shadow-sm">
++            <div className="flex items-center justify-between gap-3">
++              <div>
++                <p className="font-semibold text-admin-primary">
++                  {s.title} <span className="font-normal text-admin-muted">by {s.author?.display_name ?? "Unknown"}</span>
++                </p>
++                <div className="mt-1 flex items-center gap-2 text-xs">
++                  <span className={`rounded-full px-2 py-0.5 font-semibold ${STAGE_STYLES[s.stage]}`}>{STAGE_LABEL[s.stage]}</span>
++                  {s.score !== null && <span className="text-admin-muted">Score: {s.score}/100</span>}
++                  <span className="text-admin-muted">❤️ {s.community_votes}</span>
++                  {s.is_winner && <span className="text-emerald-600">🏆 official/community winner</span>}
++                </div>
++              </div>
++              <Button variant="secondary" onClick={() => openEntry(s)}>
++                {openId === s.id ? "Editing…" : "Read & judge"}
++              </Button>
++            </div>
++
++            {openSubmission?.id === s.id && (
++              <div className="mt-4 border-t border-slate-100 pt-4">
++                <p className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
++                  {s.content}
++                </p>
++                {s.ai_feedback && <p className="mt-2 text-xs text-admin-muted">AI feedback given to student: {s.ai_feedback}</p>}
++
++                <div className="mt-3 grid gap-3 sm:grid-cols-2">
++                  <div>
++                    <label className="mb-1 block text-sm font-medium text-slate-700">Stage</label>
++                    <select
++                      value={draftStage}
++                      onChange={(e) => setDraftStage(e.target.value as Submission["stage"])}
++                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-slate-400 focus:ring-2"
++                    >
++                      {STAGE_ORDER.map((st) => (
++                        <option key={st} value={st}>
++                          {STAGE_LABEL[st]}
++                        </option>
++                      ))}
++                    </select>
++                  </div>
++                  <div>
++                    <label className="mb-1 block text-sm font-medium text-slate-700">Score (0-100)</label>
++                    <input
++                      type="number"
++                      min={0}
++                      max={100}
++                      value={draftScore}
++                      onChange={(e) => setDraftScore(e.target.value)}
++                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 outline-none focus:border-slate-400 focus:ring-2"
++                    />
++                  </div>
++                </div>
++                <textarea
++                  value={draftFeedback}
++                  onChange={(e) => setDraftFeedback(e.target.value)}
++                  placeholder="Feedback for the student (optional)"
++                  rows={3}
++                  className="mt-3 w-full rounded-xl border border-slate-200 px-4 py-2.5 outline-none focus:border-violet-400 focus:ring-2"
++                />
++                <div className="mt-3 flex gap-2">
++                  <Button disabled={saving} onClick={() => save(s.id)}>
++                    {saving ? "Saving…" : "Save"}
++                  </Button>
++                  <Button variant="ghost" onClick={() => setOpenId(null)}>
++                    Cancel
++                  </Button>
++                </div>
++              </div>
++            )}
++          </div>
++        ))}
++      </div>
++    </div>
++  );
++}
+diff --git a/components/kids/CompetitionsClient.tsx b/components/kids/CompetitionsClient.tsx
+index 1503a3f..2f8593d 100644
+--- a/components/kids/CompetitionsClient.tsx
++++ b/components/kids/CompetitionsClient.tsx
+@@ -19,6 +19,8 @@ interface Submission {
+   ai_feedback: string | null;
+   community_votes: number;
+   is_winner: boolean;
++  stage: "participant" | "semifinalist" | "finalist" | "top_3";
++  score: number | null;
+   author: { id: string; display_name: string; equipped_title: { name: string } | null } | null;
+ }
+ interface Comment {
+@@ -34,6 +36,55 @@ const STATUS_LABEL: Record<Competition["status"], string> = {
+   judging: "Voting open",
+   completed: "Completed",
+ };
++const STATUS_GRADIENT: Record<Competition["status"], string> = {
++  draft: "from-slate-400 to-slate-500",
++  active: "from-kids-purple to-violet-500",
++  judging: "from-kids-teal to-cyan-500",
++  completed: "from-kids-yellow to-amber-500",
++};
++const STAGE_LABEL: Record<Submission["stage"], string> = {
++  participant: "Participant",
++  semifinalist: "Semifinalist",
++  finalist: "Finalist",
++  top_3: "🏆 Top 3 Winner",
++};
++const STAGE_STYLES: Record<Submission["stage"], string> = {
++  participant: "bg-slate-100 text-slate-600",
++  semifinalist: "bg-sky-100 text-sky-700",
++  finalist: "bg-violet-100 text-violet-700",
++  top_3: "bg-amber-100 text-amber-700",
++};
++
++/** Ticks down to `target` every second — used for the "time left to submit / vote" clock. */
++function useCountdown(target: string | null) {
++  const [now, setNow] = useState(() => Date.now());
++  useEffect(() => {
++    if (!target) return;
++    const id = setInterval(() => setNow(Date.now()), 1000);
++    return () => clearInterval(id);
++  }, [target]);
++  if (!target) return null;
++  const diff = new Date(target).getTime() - now;
++  if (diff <= 0) return "Time's up";
++  const days = Math.floor(diff / 86400000);
++  const hours = Math.floor((diff % 86400000) / 3600000);
++  const minutes = Math.floor((diff % 3600000) / 60000);
++  const seconds = Math.floor((diff % 60000) / 1000);
++  if (days > 0) return `${days}d ${hours}h left`;
++  if (hours > 0) return `${hours}h ${minutes}m left`;
++  return `${minutes}m ${seconds}s left`;
++}
++
++function CountdownBadge({ competition }: { competition: Competition }) {
++  const target = competition.status === "active" ? competition.ends_at : competition.status === "judging" ? competition.ends_at : null;
++  const label = useCountdown(target);
++  if (!label) return null;
++  return (
++    <span className="inline-flex items-center gap-1 rounded-full bg-black/20 px-2.5 py-1 text-xs font-bold text-white">
++      ⏱️ {label}
++    </span>
++  );
++}
+ 
+ export function CompetitionsClient({ currentUserId }: { currentUserId: string }) {
+   const [competitions, setCompetitions] = useState<Competition[]>([]);
+@@ -132,6 +183,7 @@ export function CompetitionsClient({ currentUserId }: { currentUserId: string })
+   }
+ 
+   const myOwnSubmission = submissions.find((s) => s.author?.id === currentUserId);
++  const top3 = [...submissions].filter((s) => s.stage === "top_3").sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+ 
+   if (selectedId && selected) {
+     return (
+@@ -139,10 +191,41 @@ export function CompetitionsClient({ currentUserId }: { currentUserId: string })
+         <button type="button" onClick={() => setSelectedId(null)} className="text-sm font-semibold text-kids-purple">
+           ← All competitions
+         </button>
+-        <h1 className="font-kids-display mt-2 text-2xl font-bold text-slate-900">{selected.title}</h1>
+-        <p className="mt-1 text-slate-600">{selected.prompt}</p>
++
++        <div className={`mt-3 rounded-2xl bg-gradient-to-br ${STATUS_GRADIENT[selected.status]} p-5 text-white shadow-lg`}>
++          <div className="flex items-start justify-between gap-3">
++            <h1 className="font-kids-display text-2xl font-bold">{selected.title}</h1>
++            <CountdownBadge competition={selected} />
++          </div>
++          <p className="mt-2 text-sm opacity-90">{selected.prompt}</p>
++          {myOwnSubmission && (
++            <span className={`mt-3 inline-block rounded-full px-3 py-1 text-xs font-bold ${STAGE_STYLES[myOwnSubmission.stage]}`}>
++              Your entry: {STAGE_LABEL[myOwnSubmission.stage]}
++            </span>
++          )}
++        </div>
++
+         {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+ 
++        {selected.status === "completed" && top3.length > 0 && (
++          <div className="mt-4 rounded-2xl bg-white p-5 shadow-md">
++            <h2 className="font-kids-display text-lg font-bold text-slate-900">🏆 Leaderboard</h2>
++            <div className="mt-3 space-y-2">
++              {top3.map((s, i) => (
++                <div key={s.id} className="flex items-center gap-3 rounded-xl bg-amber-50 p-3">
++                  <span className="text-2xl">{["🥇", "🥈", "🥉"][i] ?? "🏅"}</span>
++                  <div className="flex-1">
++                    <p className="font-semibold text-slate-900">
++                      {s.title} <span className="font-normal text-slate-500">by {s.author?.display_name}</span>
++                    </p>
++                    {s.score !== null && <p className="text-xs text-slate-500">Score: {s.score}/100</p>}
++                  </div>
++                </div>
++              ))}
++            </div>
++          </div>
++        )}
++
+         {selected.status === "active" && !myOwnSubmission && (
+           <div className="mt-4 rounded-2xl bg-white p-5 shadow-md">
+             <h2 className="font-semibold text-slate-900">Submit your story</h2>
+@@ -164,14 +247,21 @@ export function CompetitionsClient({ currentUserId }: { currentUserId: string })
+           {submissions.map((s) => (
+             <div key={s.id} className="rounded-2xl bg-white p-5 shadow-md">
+               <div className="flex items-center justify-between gap-3">
+-                <p className="font-semibold text-slate-900">
+-                  {s.title}{" "}
+-                  <span className="font-normal text-slate-500">
+-                    by {s.author?.display_name}
+-                    {s.author?.equipped_title && <span className="text-violet-500"> · {s.author.equipped_title.name}</span>}
+-                  </span>
+-                  {s.is_winner && <span className="ml-2 text-emerald-600">🏆</span>}
+-                </p>
++                <div>
++                  <p className="font-semibold text-slate-900">
++                    {s.title}{" "}
++                    <span className="font-normal text-slate-500">
++                      by {s.author?.display_name}
++                      {s.author?.equipped_title && <span className="text-violet-500"> · {s.author.equipped_title.name}</span>}
++                    </span>
++                    {s.is_winner && <span className="ml-2 text-emerald-600">🏆</span>}
++                  </p>
++                  {selected.status !== "active" && (
++                    <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold ${STAGE_STYLES[s.stage]}`}>
++                      {STAGE_LABEL[s.stage]}
++                    </span>
++                  )}
++                </div>
+                 {selected.status === "judging" && s.author?.id !== currentUserId && (
+                   <button
+                     type="button"
+@@ -223,29 +313,33 @@ export function CompetitionsClient({ currentUserId }: { currentUserId: string })
+ 
+   return (
+     <div>
+-      <h1 className="font-kids-display text-2xl font-bold text-slate-900">Writing Competitions</h1>
+-      <div className="mt-4 space-y-3">
+-        {loading && <p className="text-sm text-slate-400">Loading…</p>}
+-        {!loading && competitions.length === 0 && (
+-          <p className="text-sm text-slate-400">No competitions right now — check back soon!</p>
+-        )}
+-        {competitions.map((c) => (
+-          <button
+-            key={c.id}
+-            type="button"
+-            onClick={() => openCompetition(c.id)}
+-            className="block w-full rounded-2xl bg-white p-5 text-left shadow-md hover:shadow-lg"
+-          >
+-            <div className="flex items-center justify-between">
+-              <p className="font-semibold text-slate-900">{c.title}</p>
+-              <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">
+-                {STATUS_LABEL[c.status]}
+-              </span>
+-            </div>
+-            <p className="mt-1 text-sm text-slate-500">{c.prompt}</p>
+-          </button>
+-        ))}
+-      </div>
++      <h1 className="font-kids-display text-3xl font-bold text-slate-900">Writing Competitions</h1>
++      {loading ? (
++        <p className="mt-8 text-slate-500">Loading…</p>
++      ) : (
++        <div className="mt-6 grid gap-4 sm:grid-cols-2">
++          {competitions.length === 0 && (
++            <p className="col-span-2 text-center text-slate-500">No competitions right now — check back soon!</p>
++          )}
++          {competitions.map((c) => (
++            <button
++              key={c.id}
++              type="button"
++              onClick={() => openCompetition(c.id)}
++              className="text-left"
++            >
++              <div className={`rounded-2xl bg-gradient-to-br ${STATUS_GRADIENT[c.status]} p-5 text-white shadow-md transition hover:shadow-lg`}>
++                <div className="flex items-start justify-between gap-3">
++                  <span className="rounded-full bg-black/20 px-2.5 py-1 text-xs font-bold">{STATUS_LABEL[c.status]}</span>
++                  <CountdownBadge competition={c} />
++                </div>
++                <h3 className="font-kids-display mt-3 text-xl font-bold">{c.title}</h3>
++                <p className="mt-1 text-sm opacity-90 line-clamp-2">{c.prompt}</p>
++              </div>
++            </button>
++          ))}
++        </div>
++      )}
+     </div>
+   );
+ }
+diff --git a/supabase/migrations/034_writing_contest_stages_and_reading_ai.sql b/supabase/migrations/034_writing_contest_stages_and_reading_ai.sql
+new file mode 100644
+index 0000000..5596484
+--- /dev/null
++++ b/supabase/migrations/034_writing_contest_stages_and_reading_ai.sql
+@@ -0,0 +1,33 @@
++-- Writing contest advancement stages + AI-formatted reading challenges.
++--
++-- IMPORTANT: this extends the writing contest system that already exists
++-- (migration 024: writing_competitions, writing_submissions,
++-- submission_comments, submission_votes) rather than creating a parallel
++-- one. It does NOT touch the existing official/community winner flow in
++-- app/api/competitions/[id]/judge (is_winner, prizes) — `stage` is an
++-- additive admin workflow for showing students where they stand
++-- (Participant -> Semifinalist -> Finalist -> Top 3) during judging,
++-- independent of which submission(s) end up flagged is_winner.
++
++alter table public.writing_submissions add column if not exists stage text not null default 'participant'
++  check (stage in ('participant', 'semifinalist', 'finalist', 'top_3'));
++alter table public.writing_submissions add column if not exists score int
++  check (score is null or (score between 0 and 100));
++alter table public.writing_submissions add column if not exists admin_feedback text;
++
++create index if not exists writing_submissions_stage_idx on public.writing_submissions (stage);
++
++-- No new RLS needed: writing_submissions_admin_update (024) already covers
++-- admin writes to any column via is_admin(), and writing_submissions_select
++-- (024) already exposes every column — including ai_feedback today — to
++-- any authenticated user once the competition isn't in draft. admin_feedback
++-- follows that same existing precedent rather than introducing a
++-- column-level access model nothing else in this table uses. Revisit if
++-- admin_feedback needs to be author-and-admin-only later.
++
++-- Reading competitions reuse the existing `challenges` table (migration
++-- 001, extended in 008/009/015) instead of a new reading_competitions
++-- table — same reasoning as writing contests: one source of truth.
++-- `tagline` is the one new field the AI formatter needs that the table
++-- doesn't already have; title/description/badge_icon already exist.
++alter table public.challenges add column if not exists tagline text;
+-- 
+2.43.0
+

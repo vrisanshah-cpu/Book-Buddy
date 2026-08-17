@@ -1,0 +1,96 @@
+-- BookBuy Marketplace v2 — listings only, no payments processed through
+-- Book Buddy (for now). A buyer who wants an item clicks "Express interest,"
+-- which opens a normal message thread with the seller (reusing
+-- conversations/messages from migration 019) so the two of them arrange
+-- payment and delivery themselves, outside the app.
+--
+-- This supersedes the earlier Stripe Connect design: no marketplace_sellers
+-- table, no marketplace_orders table, no seller verification gate — any
+-- parent/teacher account can list something, since Book Buddy never holds
+-- or moves money here.
+--
+-- NOTE ON NUMBERING: starts at 029 because the repo's migrations already
+-- run through 028 (028_parent_dashboard_overhaul.sql).
+--
+-- Kid safety: no marketplace table is ever readable or writable by a kid
+-- account — every policy below explicitly requires the caller's own users
+-- row to have role in ('parent', 'teacher').
+
+create table if not exists public.marketplace_listings (
+  id uuid primary key default gen_random_uuid(),
+  seller_id uuid not null references public.users(id) on delete cascade,
+  category text not null check (category in (
+    'books', 'school_supplies', 'tutoring', 'writing', 'editing', 'coaching', 'collectibles'
+  )),
+  title text not null check (char_length(title) between 1 and 140),
+  description text not null check (char_length(description) between 1 and 4000),
+  price_cents int not null check (price_cents > 0),
+  -- Only meaningful for physical goods; nullable for tutoring/coaching/editing/writing.
+  condition text check (condition in ('new', 'used', 'digital', 'service')),
+  -- null = unlimited / appointment-based (services). Physical goods get a real count.
+  quantity_available int check (quantity_available is null or quantity_available >= 0),
+  photo_urls text[] not null default '{}',
+  status text not null default 'active' check (status in ('active', 'inactive')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists marketplace_listings_seller_idx on public.marketplace_listings (seller_id);
+create index if not exists marketplace_listings_browse_idx on public.marketplace_listings (status, category, created_at desc);
+
+alter table public.marketplace_listings enable row level security;
+
+-- Sellers manage their own listings (any status). Everyone else only ever
+-- sees active listings — there's no verification concept to gate on
+-- anymore, since no money moves through the app.
+drop policy if exists "marketplace_listings_select" on public.marketplace_listings;
+create policy "marketplace_listings_select" on public.marketplace_listings for select
+  using (seller_id = auth.uid() or status = 'active');
+
+-- with check requires the caller's own role to be parent/teacher, not just
+-- seller_id = auth.uid() — this is what keeps a kid account from ever
+-- creating a listing even if the app-level guard were somehow bypassed.
+drop policy if exists "marketplace_listings_insert_own" on public.marketplace_listings;
+create policy "marketplace_listings_insert_own" on public.marketplace_listings for insert
+  with check (
+    seller_id = auth.uid()
+    and exists (select 1 from public.users u where u.id = auth.uid() and u.role in ('parent', 'teacher'))
+  );
+
+drop policy if exists "marketplace_listings_update_own" on public.marketplace_listings;
+create policy "marketplace_listings_update_own" on public.marketplace_listings for update
+  using (seller_id = auth.uid())
+  with check (seller_id = auth.uid());
+
+-- No delete policy — listings are deactivated (status = 'inactive'), never
+-- hard-deleted. No delete needed at all here since nothing else (like an
+-- order) ever references a listing_id in this simplified version.
+
+-- =============================================================================
+-- STORAGE: listing photos
+-- =============================================================================
+-- Public read (standard for product photos). Writes are scoped to a
+-- parent/teacher's own "<user_id>/..." folder.
+
+insert into storage.buckets (id, name, public)
+values ('marketplace-listing-photos', 'marketplace-listing-photos', true)
+on conflict (id) do nothing;
+
+drop policy if exists "marketplace_photos_public_read" on storage.objects;
+create policy "marketplace_photos_public_read" on storage.objects for select
+  using (bucket_id = 'marketplace-listing-photos');
+
+drop policy if exists "marketplace_photos_seller_write" on storage.objects;
+create policy "marketplace_photos_seller_write" on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'marketplace-listing-photos'
+    and (storage.foldername(name))[1] = auth.uid()::text
+    and exists (select 1 from public.users u where u.id = auth.uid() and u.role in ('parent', 'teacher'))
+  );
+
+drop policy if exists "marketplace_photos_seller_delete" on storage.objects;
+create policy "marketplace_photos_seller_delete" on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'marketplace-listing-photos'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
