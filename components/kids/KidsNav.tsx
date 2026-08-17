@@ -11,6 +11,7 @@ const primaryLinks = [
   { href: "/kids/home", label: "Home", emoji: "🏠" },
   { href: "/kids/shelf", label: "Shelf", emoji: "📚" },
   { href: "/kids/discover", label: "Discover", emoji: "🔎" },
+  { href: "/kids/rewards", label: "Rewards", emoji: "🎁" },
 ];
 
 // Only account-y utility links live in the nav's "More" menu now — every

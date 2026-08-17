@@ -188,22 +188,52 @@ export function RewardsClient() {
       <section className="mt-6 rounded-2xl bg-white p-6 shadow-md">
         <h2 className="font-kids-display text-xl font-bold text-slate-900">👋 Invite a Friend</h2>
         <p className="mt-1 text-sm text-slate-500">
-          You get 100 XP (and they get 25) once they finish their first reading session.
+          Share your invite link or code. When a friend signs up with it and completes their first reading session,
+          you get 100 XP and they get 25 XP.
         </p>
-        {status.referralCode && (
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <code className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-800">
-              {typeof window !== "undefined" ? window.location.origin : ""}/auth/register?ref={status.referralCode}
-            </code>
-            <Button variant="secondary" className="!text-sm" onClick={copyReferralLink}>
-              {copied ? "Copied!" : "Copy link"}
+
+        {status.referralCode ? (
+          <div className="mt-4 rounded-xl bg-violet-50 p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-violet-700">Your invite code</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <code className="rounded-lg bg-white px-4 py-2 text-lg font-bold tracking-widest text-slate-900 shadow-sm">
+                {status.referralCode}
+              </code>
+              <Button
+                variant="secondary"
+                className="!text-sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(status.referralCode!);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+              >
+                {copied ? "Copied!" : "Copy code"}
+              </Button>
+            </div>
+            <p className="mt-3 break-all text-xs text-slate-500">
+              Invite link: {window.location.origin}/auth/register?ref={status.referralCode}
+            </p>
+            <Button variant="kids" className="mt-3 !text-sm" onClick={copyReferralLink}>
+              {copied ? "Copied!" : "Copy invite link"}
             </Button>
+            <p className="mt-3 text-xs text-slate-500">
+              Book Buddy connects the signup to your account using this code. The reward is only paid after the new
+              reader completes their first reading session.
+            </p>
           </div>
+        ) : (
+          <p className="mt-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-800">
+            Your invite code is still being created. Refresh this page in a moment.
+          </p>
         )}
+
         <p className="mt-3 text-sm text-slate-500">
-          Friends who joined so far: <span className="font-semibold text-slate-900">{status.successfulReferrals}</span>
+          Friends who completed a first reading session:{" "}
+          <span className="font-semibold text-slate-900">{status.successfulReferrals}</span>
         </p>
       </section>
+
     </div>
   );
 }

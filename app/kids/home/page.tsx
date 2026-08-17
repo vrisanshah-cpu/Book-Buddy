@@ -94,6 +94,7 @@ export default async function KidsHomePage() {
 
   const exploreLinks = [
     { href: "/kids/discover", label: "Discover", emoji: "🔎" },
+    { href: "/kids/rewards", label: "Daily Rewards", emoji: "🎁" },
     { href: "/kids/events", label: "Events", emoji: "🏅" },
     { href: "/kids/collection", label: "Cards", emoji: "🃏" },
     { href: "/kids/challenges", label: "Challenges", emoji: "🏆" },
