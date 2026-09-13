@@ -11,11 +11,11 @@ const config: Config = {
     extend: {
       colors: {
         kids: {
-          purple: "#7C3AED",
-          teal: "#14B8A6",
-          yellow: "#FBBF24",
-          pink: "#F472B6",
-          bg: "#F5F3FF",
+          purple: "#5B4BC4",
+          teal: "#0F9F8F",
+          yellow: "#F4B942",
+          pink: "#E8759B",
+          bg: "#F7F5EF",
         },
         parent: {
           primary: "#3B82F6",

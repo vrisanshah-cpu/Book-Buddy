@@ -11,6 +11,21 @@
 body {
   color: var(--foreground);
   background: var(--background);
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: #ddd6fe;
+  color: #2e1065;
+}
+
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 3px solid #8b5cf6;
+  outline-offset: 3px;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 /* Accessibility (Phase B) — toggled by AccessibilityProvider on <html>
@@ -110,6 +125,20 @@ html.dyslexia-font {
   animation: landing-sparkle 4.5s ease-in-out infinite;
 }
 
+@keyframes landing-float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(var(--float-rotation, -2deg));
+  }
+  50% {
+    transform: translateY(-7px) rotate(var(--float-rotation, -2deg));
+  }
+}
+
+.landing-float {
+  animation: landing-float 3.5s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .landing-book,
   .landing-badge,
@@ -118,6 +147,10 @@ html.dyslexia-font {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
+  }
+
+  .landing-float {
+    animation: none !important;
   }
 }
 

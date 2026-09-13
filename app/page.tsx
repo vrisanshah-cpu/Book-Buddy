@@ -1,308 +1,97 @@
 import Link from "next/link";
-import { ShieldCheck, BarChart3, MessagesSquare, BookOpenCheck } from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { FeedbackSurveySection } from "@/components/feedback/FeedbackSurveySection";
+import {
+  ArrowRight,
+  BarChart3,
+  BookOpen,
+  Check,
+  Flame,
+  Heart,
+  LockKeyhole,
+  MessageCircle,
+  ShieldCheck,
+  Sparkles,
+  Star,
+  Users,
+} from "lucide-react";
 import { FeedbackSurveyLauncher } from "@/components/feedback/FeedbackSurveyLauncher";
 
-const BOOK_SPINES = [
-  { color: "#7C3AED", height: 118, width: 34 },
-  { color: "#14B8A6", height: 96, width: 30 },
-  { color: "#F472B6", height: 132, width: 36 },
-  { color: "#FBBF24", height: 104, width: 28 },
-  { color: "#7C3AED", height: 90, width: 32 },
-  { color: "#14B8A6", height: 122, width: 34 },
-];
-
-const POPULAR_PICKS = [
-  { title: "Wonder", author: "R.J. Palacio", color: "#7C3AED" },
-  { title: "Percy Jackson", author: "Rick Riordan", color: "#14B8A6" },
-  { title: "The One and Only Ivan", author: "Katherine Applegate", color: "#F472B6" },
-  { title: "Diary of a Wimpy Kid", author: "Jeff Kinney", color: "#FBBF24" },
-];
-
-const KID_HIGHLIGHTS = [
-  { emoji: "🦉", title: "Pip, their reading buddy", desc: "An AI companion who knows the book they're on and chats about it — never off-topic, never bored." },
-  { emoji: "🎯", title: "Quizzes for any book", desc: "Search a title, get a quick quiz written just for that story. No generic trivia." },
-  { emoji: "🏅", title: "Badges, streaks, XP", desc: "Every finished book, every quiz, every streak adds up — and shows up on the class leaderboard." },
-  { emoji: "🎬", title: "BookTok for readers", desc: "A moderated space to rave about books with classmates — not the internet at large." },
-];
-
-const GROWNUP_HIGHLIGHTS = [
-  { icon: BarChart3, title: "Real dashboards", desc: "See minutes read, books finished, and quiz scores for every kid or student, updated live." },
-  { icon: ShieldCheck, title: "No ads on kid pages", desc: "Ever. Ads only ever appear on parent and teacher pages — kids never see one." },
-  { icon: BookOpenCheck, title: "Assign with intention", desc: "Build reading lists, assign challenges, and set them loose on books that fit." },
-  { icon: MessagesSquare, title: "Every post, moderated", desc: "Book clubs and BookTok are classroom-scoped and reviewable — nothing slips past you." },
+const FEATURES = [
+  { icon: BookOpen, tone: "bg-amber-100 text-amber-800", title: "A reading routine that sticks", body: "Kids always know what to do next: pick up their book, log a session, and celebrate the win." },
+  { icon: Sparkles, tone: "bg-violet-100 text-violet-700", title: "Motivation without the pressure", body: "Gentle streaks, collectible rewards, and challenges turn progress into something they can see and feel." },
+  { icon: BarChart3, tone: "bg-teal-100 text-teal-800", title: "The useful bits for grown-ups", body: "Parents and teachers get clear reading trends and helpful signals—not another dashboard to babysit." },
 ];
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-landing-paper font-kids text-landing-ink">
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
-        <span className="font-kids-display text-2xl font-bold text-kids-purple">
-          📚 Book Buddy
-        </span>
-        <div className="flex items-center gap-2 sm:gap-3">
-          <FeedbackSurveyLauncher variant="link" label="Feedback" />
-          <Link href="/auth/login">
-            <Button variant="ghost">Log in</Button>
-          </Link>
-          <Link href="/auth/register">
-            <Button variant="kids">Get started</Button>
-          </Link>
-        </div>
+    <div className="min-h-screen overflow-hidden bg-[#fbfaf6] font-kids text-slate-950">
+      <header className="relative z-20 mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-10">
+        <Link href="/" className="group flex items-center gap-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300">
+          <span className="grid h-10 w-10 place-items-center rounded-2xl bg-violet-600 text-xl shadow-[0_7px_0_#4c1d95] transition-transform group-hover:-translate-y-0.5" aria-hidden="true">📚</span>
+          <span className="font-kids-display text-xl font-semibold tracking-tight">Book Buddy</span>
+        </Link>
+        <nav aria-label="Main navigation" className="flex items-center gap-2 sm:gap-4">
+          <Link href="#how-it-works" className="hidden rounded-lg px-3 py-2 text-sm font-bold text-slate-600 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300 sm:block">How it works</Link>
+          <Link href="/auth/login" className="rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 hover:bg-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300 sm:px-4">Log in</Link>
+          <Link href="/auth/register" className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-slate-900/10 transition hover:-translate-y-0.5 hover:bg-violet-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300 sm:px-5">Start free</Link>
+        </nav>
       </header>
 
-      {/* ---------------------------------------------------------------- HERO */}
       <main>
-        <section className="relative overflow-hidden">
-          <Sparkle top="12%" left="8%" delay="0s" />
-          <Sparkle top="22%" left="88%" delay="1.1s" />
-          <Sparkle top="68%" left="4%" delay="2.2s" />
-          <Sparkle top="8%" left="52%" delay="0.6s" />
-
-          <div className="relative mx-auto max-w-4xl px-6 pb-8 pt-14 text-center sm:pt-20">
-            <span className="inline-block rounded-full bg-violet-100 px-3 py-1 font-teacher text-xs font-semibold uppercase tracking-wide text-kids-purple">
-              For kids 5–12 · Free to start
-            </span>
-
-            <h1 className="mt-5 font-kids-display text-5xl font-bold leading-[1.08] text-landing-ink md:text-6xl">
-              Turn story time into
-              <br />
-              <span className="text-kids-purple">their favorite time.</span>
-            </h1>
-
-            <p className="mx-auto mt-6 max-w-xl text-lg text-slate-600">
-              Book Buddy turns reading into a game your kid actually wants to play —
-              quizzes, badges, a reading buddy named Pip, and dashboards that keep you
-              in the loop.
-            </p>
-
-            <div className="mt-8 flex flex-wrap justify-center gap-4">
-              <Link href="/auth/register">
-                <Button
-                  variant="kids"
-                  className="px-8 py-3 text-base transition hover:-translate-y-0.5 hover:shadow-xl"
-                >
-                  Create free account
-                </Button>
-              </Link>
-              <Link href="/auth/login">
-                <Button
-                  variant="secondary"
-                  className="px-8 py-3 text-base transition hover:-translate-y-0.5"
-                >
-                  I already have an account
-                </Button>
-              </Link>
+        <section className="relative mx-auto grid max-w-7xl items-center gap-12 px-5 pb-20 pt-14 sm:px-8 sm:pt-20 lg:grid-cols-[1.02fr_.98fr] lg:px-10 lg:pb-28 lg:pt-24">
+          <div className="relative z-10">
+            <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-extrabold uppercase tracking-[.16em] text-violet-700 shadow-sm">
+              <Heart className="h-3.5 w-3.5 fill-current" aria-hidden="true" /> Made for curious readers, ages 5–12
+            </div>
+            <h1 className="mt-7 max-w-3xl font-kids-display text-[3.35rem] font-semibold leading-[.98] tracking-[-.035em] sm:text-7xl lg:text-[5.15rem]">One more chapter feels like a win.</h1>
+            <p className="mt-7 max-w-xl text-lg font-semibold leading-8 text-slate-600 sm:text-xl">Book Buddy helps kids build a reading habit through small goals, joyful rewards, and a friendly guide named Pip.</p>
+            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+              <Link href="/auth/register" className="group inline-flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-violet-600 px-7 text-base font-extrabold text-white shadow-[0_7px_0_#4c1d95] transition hover:-translate-y-0.5 hover:bg-violet-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300">Start your reading adventure <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" aria-hidden="true" /></Link>
+              <Link href="#how-it-works" className="inline-flex min-h-14 items-center justify-center rounded-2xl border-2 border-slate-200 bg-white px-7 text-base font-extrabold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300">See how it works</Link>
+            </div>
+            <div className="mt-7 flex flex-wrap gap-x-5 gap-y-2 text-sm font-bold text-slate-500">
+              <span className="inline-flex items-center gap-1.5"><Check className="h-4 w-4 text-teal-600" />Free to start</span>
+              <span className="inline-flex items-center gap-1.5"><ShieldCheck className="h-4 w-4 text-teal-600" />No ads for kids</span>
+              <span className="inline-flex items-center gap-1.5"><LockKeyhole className="h-4 w-4 text-teal-600" />Grown-up visibility</span>
             </div>
           </div>
 
-          {/* Signature: the animated bookshelf */}
-          <div className="mx-auto mt-6 max-w-3xl px-6 pb-16">
-            <svg
-              viewBox="0 0 640 210"
-              className="mx-auto w-full max-w-2xl"
-              role="img"
-              aria-label="An illustrated bookshelf with colorful books and Pip the owl perched on the end"
-            >
-              {/* floating badges */}
-              <g className="landing-badge" style={{ animationDelay: "1.0s" }}>
-                <circle cx="120" cy="34" r="17" fill="#FBBF24" />
-                <text x="120" y="40" textAnchor="middle" fontSize="18">
-                  🏆
-                </text>
-              </g>
-              <g className="landing-badge" style={{ animationDelay: "1.2s" }}>
-                <circle cx="330" cy="20" r="15" fill="#F472B6" />
-                <text x="330" y="26" textAnchor="middle" fontSize="15">
-                  🔥
-                </text>
-              </g>
-              <g className="landing-badge" style={{ animationDelay: "1.4s" }}>
-                <circle cx="450" cy="40" r="15" fill="#14B8A6" />
-                <text x="450" y="46" textAnchor="middle" fontSize="15">
-                  ⭐
-                </text>
-              </g>
-
-              {/* the shelf plank */}
-              <rect x="20" y="176" width="600" height="14" rx="7" fill="#5C3A21" />
-              <rect x="20" y="176" width="600" height="5" rx="2.5" fill="#7A4F2E" />
-
-              {/* book spines, staggered pop-in */}
-              {BOOK_SPINES.map((book, i) => {
-                const x = 46 + i * 46;
-                const y = 176 - book.height;
-                return (
-                  <g
-                    key={i}
-                    className="landing-book"
-                    style={{ animationDelay: `${0.15 + i * 0.1}s` }}
-                  >
-                    <rect
-                      x={x}
-                      y={y}
-                      width={book.width}
-                      height={book.height}
-                      rx="5"
-                      fill={book.color}
-                    />
-                    <rect
-                      x={x + 6}
-                      y={y + 14}
-                      width={book.width - 12}
-                      height="4"
-                      rx="2"
-                      fill="rgba(255,255,255,0.55)"
-                    />
-                  </g>
-                );
-              })}
-
-              {/* Pip, perched at the end of the shelf */}
-              <g className="landing-pip" style={{ transformOrigin: "560px 150px" }}>
-                <ellipse cx="560" cy="150" rx="30" ry="26" fill="#7C3AED" />
-                <circle cx="549" cy="142" r="10" fill="white" />
-                <circle cx="571" cy="142" r="10" fill="white" />
-                <circle cx="549" cy="143" r="4.5" fill="#241748" />
-                <circle cx="571" cy="143" r="4.5" fill="#241748" />
-                <polygon points="560,150 554,158 566,158" fill="#FBBF24" />
-                <path d="M534 152 Q522 148 528 168" stroke="#7C3AED" strokeWidth="8" fill="none" strokeLinecap="round" />
-                <path d="M586 152 Q598 148 592 168" stroke="#7C3AED" strokeWidth="8" fill="none" strokeLinecap="round" />
-              </g>
-            </svg>
-          </div>
-        </section>
-
-        {/* ---------------------------------------------------------- HOW IT WORKS */}
-        <section className="mx-auto max-w-5xl px-6 py-16">
-          <h2 className="text-center font-kids-display text-3xl font-bold text-landing-ink">
-            Three steps. Every book.
-          </h2>
-          <div className="mt-10 grid gap-8 md:grid-cols-3">
-            {[
-              { n: "01", title: "Pick a book", desc: "Search real titles or grab one your teacher or parent assigned." },
-              { n: "02", title: "Read & play", desc: "Log minutes, then take a quick quiz Pip writes just for that book." },
-              { n: "03", title: "Earn the shelf", desc: "XP, badges, and streaks stack up — and land on the class leaderboard." },
-            ].map((step) => (
-              <div key={step.n} className="relative rounded-2xl bg-white p-6 shadow-md">
-                <span className="font-teacher text-sm font-bold tracking-wide text-kids-purple/50">
-                  {step.n}
-                </span>
-                <h3 className="mt-2 font-kids-display text-xl font-bold text-landing-ink">
-                  {step.title}
-                </h3>
-                <p className="mt-2 text-slate-600">{step.desc}</p>
+          <div className="relative mx-auto w-full max-w-xl lg:max-w-none" aria-label="Preview of the Book Buddy reading dashboard">
+            <div className="absolute -left-24 top-5 h-56 w-56 rounded-full bg-amber-200/70 blur-3xl" />
+            <div className="absolute -right-20 bottom-0 h-64 w-64 rounded-full bg-violet-200/70 blur-3xl" />
+            <div className="relative rotate-1 rounded-[2rem] border border-white/80 bg-white/90 p-4 shadow-[0_35px_90px_-35px_rgba(46,16,101,.45)] backdrop-blur sm:p-6">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4"><div><p className="text-xs font-extrabold uppercase tracking-widest text-violet-600">Today&apos;s quest</p><p className="mt-1 font-kids-display text-xl font-semibold">Read for 20 minutes</p></div><div className="grid h-12 w-12 place-items-center rounded-2xl bg-violet-100 text-2xl" aria-hidden="true">🦉</div></div>
+              <div className="mt-5 rounded-[1.5rem] bg-[#242038] p-5 text-white sm:p-6">
+                <div className="flex gap-4"><div className="grid h-28 w-20 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-amber-300 to-orange-500 text-4xl shadow-lg" aria-hidden="true">🐉</div><div className="min-w-0 flex-1"><span className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-amber-200">Reading now</span><h2 className="mt-3 truncate font-kids-display text-xl font-semibold">The Dragon&apos;s Library</h2><p className="mt-1 text-sm text-slate-300">Chapter 7 of 12</p><div className="mt-4 h-2 overflow-hidden rounded-full bg-white/15"><div className="h-full w-[58%] rounded-full bg-amber-300" /></div><div className="mt-2 flex justify-between text-xs font-bold text-slate-300"><span>58% finished</span><span>+20 XP</span></div></div></div>
+                <div className="mt-5 flex min-h-12 items-center justify-center rounded-xl bg-white font-extrabold text-slate-950">Continue reading <ArrowRight className="ml-2 h-4 w-4" /></div>
               </div>
-            ))}
-          </div>
-        </section>
-
-        {/* ---------------------------------------------------------- KID / GROWN-UP SPLIT */}
-        <section className="bg-kids-bg py-16">
-          <div className="mx-auto grid max-w-5xl gap-10 px-6 md:grid-cols-2">
-            <div>
-              <span className="font-teacher text-xs font-semibold uppercase tracking-wide text-kids-purple">
-                What your kid sees
-              </span>
-              <h3 className="mt-2 font-kids-display text-2xl font-bold text-landing-ink">
-                A world built to pull them back in
-              </h3>
-              <div className="mt-6 space-y-5">
-                {KID_HIGHLIGHTS.map((h) => (
-                  <div key={h.title} className="flex gap-3">
-                    <span className="text-2xl">{h.emoji}</span>
-                    <div>
-                      <p className="font-bold text-landing-ink">{h.title}</p>
-                      <p className="text-sm text-slate-600">{h.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <div className="mt-4 grid grid-cols-3 gap-3"><Stat icon={<Flame className="h-5 w-5 text-orange-600" />} value="6 days" label="streak" /><Stat icon={<Star className="h-5 w-5 fill-amber-400 text-amber-400" />} value="1,240" label="XP earned" /><Stat icon={<BookOpen className="h-5 w-5 text-teal-600" />} value="8" label="books read" /></div>
             </div>
-
-            <div>
-              <span className="font-teacher text-xs font-semibold uppercase tracking-wide text-slate-500">
-                What you see
-              </span>
-              <h3 className="mt-2 font-kids-display text-2xl font-bold text-landing-ink">
-                Full visibility, zero extra work
-              </h3>
-              <div className="mt-6 space-y-5">
-                {GROWNUP_HIGHLIGHTS.map((h) => (
-                  <div key={h.title} className="flex gap-3">
-                    <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm">
-                      <h.icon className="h-5 w-5 text-kids-purple" strokeWidth={2} />
-                    </span>
-                    <div>
-                      <p className="font-teacher font-bold text-landing-ink">{h.title}</p>
-                      <p className="text-sm text-slate-600">{h.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <div className="landing-float absolute -left-5 top-24 hidden -rotate-6 rounded-2xl bg-amber-300 px-4 py-3 font-kids-display font-semibold text-amber-950 shadow-xl sm:block">🔥 New streak!</div>
+            <div className="landing-float absolute -right-4 bottom-16 hidden rotate-3 rounded-2xl bg-teal-500 px-4 py-3 font-kids-display font-semibold text-white shadow-xl sm:block" style={{ animationDelay: "1.1s" }}>+20 XP ⭐</div>
           </div>
         </section>
 
-        {/* ---------------------------------------------------------- POPULAR PICKS */}
-        <section className="mx-auto max-w-5xl px-6 py-16">
-          <h2 className="font-kids-display text-3xl font-bold text-landing-ink">
-            Books they already know
-          </h2>
-          <p className="mt-2 max-w-xl text-slate-600">
-            A few favorites kids search for on Book Buddy — every quiz is written
-            fresh for whatever title they pick, not just these.
-          </p>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {POPULAR_PICKS.map((b) => (
-              <div key={b.title} className="rounded-2xl bg-white p-5 shadow-md">
-                <div
-                  className="h-3 w-10 rounded-full"
-                  style={{ backgroundColor: b.color }}
-                />
-                <p className="mt-4 font-kids-display font-bold text-landing-ink">
-                  {b.title}
-                </p>
-                <p className="text-sm text-slate-500">{b.author}</p>
-              </div>
-            ))}
+        <section id="how-it-works" className="bg-slate-950 px-5 py-20 text-white sm:px-8 lg:py-24">
+          <div className="mx-auto max-w-7xl"><div className="grid gap-5 lg:grid-cols-[.8fr_1.2fr] lg:items-end"><div><p className="text-sm font-extrabold uppercase tracking-[.18em] text-amber-300">Built around the habit</p><h2 className="mt-3 max-w-lg font-kids-display text-4xl font-semibold leading-tight sm:text-5xl">Less hunting around. More reading.</h2></div><p className="max-w-xl text-lg leading-8 text-slate-300 lg:justify-self-end">A calm home base keeps the current book and next action obvious. Everything else is organized by purpose, so kids can explore without getting lost.</p></div>
+            <div className="mt-12 grid gap-4 md:grid-cols-3">{FEATURES.map((feature) => <article key={feature.title} className="rounded-[1.75rem] border border-white/10 bg-white/[.06] p-6 sm:p-7"><span className={`grid h-12 w-12 place-items-center rounded-2xl ${feature.tone}`}><feature.icon className="h-6 w-6" /></span><h3 className="mt-6 font-kids-display text-2xl font-semibold">{feature.title}</h3><p className="mt-3 leading-7 text-slate-300">{feature.body}</p></article>)}</div>
           </div>
         </section>
 
-        {/* ---------------------------------------------------------- FEEDBACK */}
-        <section className="mx-auto max-w-5xl px-6 pb-16">
-          <div className="rounded-3xl border border-violet-100 bg-white/80 p-8 shadow-lg backdrop-blur sm:p-12">
-            <FeedbackSurveySection
-              title="Testing Book Buddy?"
-              subtitle="We're in beta and your feedback matters. Share what you love, what's confusing, and what you want next."
-            />
-            <p className="mt-6 text-center text-sm text-slate-500">
-              Prefer a full page?{" "}
-              <Link href="/feedback" className="font-semibold text-kids-purple hover:underline">
-                Open the survey
-              </Link>
-            </p>
-          </div>
-        </section>
+        <section className="px-5 py-20 sm:px-8 lg:py-24"><div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-2"><AudienceCard icon={<Users className="h-7 w-7" />} eyebrow="For families" title="Cheer the effort, not just the finish." body="See what they’re reading, notice their rhythm, and celebrate consistency with a quick weekly view." bullets={["Reading minutes and streaks", "Current books and progress", "Private, linked child profiles"]} color="amber" /><AudienceCard icon={<MessageCircle className="h-7 w-7" />} eyebrow="For classrooms" title="Give every reader a clear next step." body="Set challenges, share book lists, and spot who could use a nudge without adding more busywork." bullets={["Class and student progress", "Purposeful reading challenges", "Moderated sharing spaces"]} color="violet" /></div></section>
+
+        <section className="px-5 pb-20 sm:px-8 lg:pb-24"><div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-8 overflow-hidden rounded-[2rem] bg-violet-600 p-8 text-white shadow-[0_20px_70px_-30px_rgba(91,33,182,.65)] sm:p-12 lg:flex-row lg:items-center"><div><p className="text-sm font-extrabold uppercase tracking-[.18em] text-violet-200">Your next chapter starts here</p><h2 className="mt-3 max-w-2xl font-kids-display text-4xl font-semibold leading-tight">Make reading the best part of their day.</h2></div><Link href="/auth/register" className="group inline-flex min-h-14 shrink-0 items-center justify-center gap-2 rounded-2xl bg-white px-7 font-extrabold text-violet-700 shadow-[0_7px_0_#ddd6fe] transition hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300">Start free <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" /></Link></div></section>
       </main>
 
-      <footer className="border-t border-violet-100 py-8 text-center text-sm text-slate-500">
-        <p className="mb-2">Book Buddy · No ads on any kid-facing page · Built for classrooms and living rooms</p>
-        <FeedbackSurveyLauncher variant="link" label="Send beta feedback" />
-      </footer>
+      <footer className="border-t border-violet-100 py-8 text-center text-sm text-slate-500"><p className="mb-2">Book Buddy · No ads on any kid-facing page · Built for classrooms and living rooms</p><FeedbackSurveyLauncher variant="link" label="Send beta feedback" /></footer>
     </div>
   );
 }
 
-function Sparkle({ top, left, delay }: { top: string; left: string; delay: string }) {
-  return (
-    <span
-      className="landing-sparkle pointer-events-none absolute text-xl"
-      style={{ top, left, animationDelay: delay }}
-      aria-hidden="true"
-    >
-      ✦
-    </span>
-  );
+function Stat({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) {
+  return <div className="rounded-xl bg-slate-50 p-3"><div className="flex items-center gap-1.5">{icon}<span className="text-sm font-extrabold text-slate-900 sm:text-base">{value}</span></div><p className="mt-2 text-xs font-bold text-slate-500">{label}</p></div>;
+}
+
+function AudienceCard({ icon, eyebrow, title, body, bullets, color }: { icon: React.ReactNode; eyebrow: string; title: string; body: string; bullets: string[]; color: "amber" | "violet" }) {
+  const tone = color === "amber" ? "bg-amber-100 text-amber-800" : "bg-violet-100 text-violet-700";
+  return <article className="rounded-[1.75rem] border border-slate-200 bg-white p-7 shadow-sm sm:p-8"><div className={`grid h-12 w-12 place-items-center rounded-2xl ${tone}`}>{icon}</div><p className="mt-6 text-xs font-extrabold uppercase tracking-[.16em] text-slate-500">{eyebrow}</p><h2 className="mt-2 font-kids-display text-3xl font-semibold">{title}</h2><p className="mt-3 leading-7 text-slate-600">{body}</p><ul className="mt-6 space-y-3">{bullets.map((bullet) => <li key={bullet} className="flex items-center gap-2.5 font-bold text-slate-700"><Check className="h-5 w-5 text-teal-600" />{bullet}</li>)}</ul></article>;
 }

@@ -22,10 +22,10 @@ export default async function KidsLayout({ children }: { children: React.ReactNo
       initialDyslexiaFont={Boolean(profile?.dyslexia_font)}
       initialTextScale={(profile?.text_scale as TextScale) ?? "normal"}
     >
-      <div className="min-h-screen bg-kids-bg font-kids">
+      <div className="min-h-screen bg-kids-bg pb-20 font-kids md:pb-0">
         <KidsNav />
         <OfflineBanner />
-        <main className="mx-auto max-w-5xl px-4 py-8">
+        <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
           <PushPrompt />
           <StreakFreezeNotice applied={streakFreezeApplied} />
           <div className="mt-4">{children}</div>

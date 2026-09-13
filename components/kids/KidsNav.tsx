@@ -26,8 +26,6 @@ const moreLinks = [
   { href: "/kids/settings", label: "Settings", emoji: "⚙️" },
 ];
 
-const allLinks = [...primaryLinks, ...moreLinks];
-
 export function KidsNav() {
   const pathname = usePathname();
   const router = useRouter();
@@ -58,10 +56,10 @@ export function KidsNav() {
   }
 
   return (
-    <nav aria-label="Kid navigation" className="sticky top-0 z-20 border-b border-violet-100 bg-white/90 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
-        <Link href="/kids/home" className="shrink-0 font-kids-display text-xl font-bold text-kids-purple">
-          📚 Book Buddy
+    <nav aria-label="Kid navigation" className="sticky top-0 z-30 border-b border-slate-200/80 bg-[#fbfaf6]/90 backdrop-blur-xl">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+        <Link href="/kids/home" className="flex shrink-0 items-center gap-2 rounded-xl font-kids-display text-lg font-semibold text-slate-950 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300 sm:text-xl">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-600 text-base shadow-[0_4px_0_#4c1d95]">📚</span> Book Buddy
         </Link>
         <div className="hidden items-center gap-2 md:flex">
           {primaryLinks.map((l) => (
@@ -69,8 +67,8 @@ export function KidsNav() {
               key={l.href}
               href={l.href}
               aria-current={pathname === l.href ? "page" : undefined}
-              className={`flex min-h-[44px] items-center rounded-xl px-3 py-2 text-sm font-semibold transition ${
-                pathname === l.href ? "bg-kids-purple text-white" : "text-slate-600 hover:bg-violet-50"
+              className={`flex min-h-[44px] items-center rounded-xl px-3 py-2 text-sm font-extrabold transition ${
+                pathname === l.href ? "bg-slate-950 text-white shadow-sm" : "text-slate-600 hover:bg-white hover:text-slate-950"
               }`}
             >
               {l.emoji} {l.label}
@@ -83,8 +81,8 @@ export function KidsNav() {
               aria-haspopup="true"
               aria-expanded={moreOpen}
               aria-controls="kids-more-menu"
-              className={`relative flex min-h-[44px] items-center rounded-xl px-3 py-2 text-sm font-semibold transition ${
-                isInMore ? "bg-kids-purple text-white" : "text-slate-600 hover:bg-violet-50"
+              className={`relative flex min-h-[44px] items-center rounded-xl px-3 py-2 text-sm font-extrabold transition ${
+                isInMore ? "bg-slate-950 text-white shadow-sm" : "text-slate-600 hover:bg-white hover:text-slate-950"
               }`}
             >
               ⋯ More
@@ -98,7 +96,7 @@ export function KidsNav() {
               <div
                 id="kids-more-menu"
                 role="menu"
-                className="absolute right-0 top-full mt-2 w-44 rounded-xl bg-white p-2 shadow-lg ring-1 ring-violet-100"
+                className="absolute right-0 top-full mt-2 w-48 rounded-2xl bg-white p-2 shadow-xl ring-1 ring-slate-200"
               >
                 {moreLinks.map((l) => (
                   <Link
@@ -106,8 +104,8 @@ export function KidsNav() {
                     href={l.href}
                     role="menuitem"
                     aria-current={pathname === l.href ? "page" : undefined}
-                    className={`flex min-h-[44px] items-center justify-between rounded-lg px-3 py-2 text-sm font-semibold ${
-                      pathname === l.href ? "bg-kids-purple text-white" : "text-slate-600 hover:bg-violet-50"
+                    className={`flex min-h-[44px] items-center justify-between rounded-xl px-3 py-2 text-sm font-bold ${
+                      pathname === l.href ? "bg-violet-600 text-white" : "text-slate-600 hover:bg-violet-50"
                     }`}
                   >
                     <span>
@@ -131,31 +129,27 @@ export function KidsNav() {
           <button
             type="button"
             onClick={signOut}
-            className="flex min-h-[44px] items-center text-sm text-slate-500 hover:text-slate-800"
+            className="flex min-h-[44px] items-center rounded-xl px-2 text-sm font-bold text-slate-500 hover:bg-white hover:text-slate-950"
           >
             Sign out
           </button>
         </div>
       </div>
-      <div className="flex items-center gap-2 overflow-x-auto px-4 pb-2 md:hidden">
-        {allLinks.map((l) => (
+      <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-200 bg-white/95 px-2 pb-[max(.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_30px_rgba(15,23,42,.08)] backdrop-blur-xl md:hidden">
+        {primaryLinks.map((l) => (
           <Link
             key={l.href}
             href={l.href}
             aria-current={pathname === l.href ? "page" : undefined}
-            className={`relative flex min-h-[44px] shrink-0 items-center rounded-xl px-3 py-1.5 text-xs font-semibold ${
-              pathname === l.href ? "bg-kids-purple text-white" : "bg-violet-50 text-slate-600"
+            className={`relative flex min-h-[52px] flex-col items-center justify-center rounded-xl px-1 text-[11px] font-extrabold ${
+              pathname === l.href ? "bg-violet-100 text-violet-800" : "text-slate-500"
             }`}
           >
-            {l.emoji} {l.label}
-            {l.href === "/kids/messages" && unreadCount > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
-                {unreadCount > 9 ? "9+" : unreadCount}
-              </span>
-            )}
+            <span className="text-lg" aria-hidden="true">{l.emoji}</span><span>{l.label}</span>
           </Link>
         ))}
-        <FeedbackSurveyLauncher variant="kids" label="Feedback" className="shrink-0 !py-1.5 !text-xs" />
+        <button type="button" onClick={() => setMoreOpen((v) => !v)} aria-expanded={moreOpen} aria-controls="kids-mobile-more-menu" className={`relative flex min-h-[52px] flex-col items-center justify-center rounded-xl px-1 text-[11px] font-extrabold ${isInMore ? "bg-violet-100 text-violet-800" : "text-slate-500"}`}><span className="text-lg">•••</span><span>More</span>{unreadCount > 0 && <span className="absolute right-2 top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] text-white">{unreadCount > 9 ? "9+" : unreadCount}</span>}</button>
+        {moreOpen && <div id="kids-mobile-more-menu" className="absolute bottom-full right-3 mb-3 w-52 rounded-2xl bg-white p-2 shadow-2xl ring-1 ring-slate-200">{moreLinks.map((l) => <Link key={l.href} href={l.href} className="flex min-h-12 items-center justify-between rounded-xl px-3 font-bold text-slate-700 hover:bg-violet-50"><span>{l.emoji} {l.label}</span>{l.href === "/kids/messages" && unreadCount > 0 && <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] text-white">{unreadCount > 9 ? "9+" : unreadCount}</span>}</Link>)}<FeedbackSurveyLauncher variant="kids" label="Send feedback" className="mt-1 w-full" /></div>}
       </div>
     </nav>
   );

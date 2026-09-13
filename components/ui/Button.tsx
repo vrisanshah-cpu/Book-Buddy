@@ -9,18 +9,18 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variants: Record<Variant, string> = {
   primary:
-    "bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50",
+    "bg-slate-950 text-white shadow-sm hover:-translate-y-0.5 hover:bg-slate-800 disabled:hover:translate-y-0 disabled:opacity-50",
   secondary:
-    "bg-slate-100 text-slate-900 hover:bg-slate-200 disabled:opacity-50",
+    "border-2 border-slate-200 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50",
   ghost: "bg-transparent text-slate-700 hover:bg-slate-100",
-  kids: "bg-kids-purple text-white hover:bg-violet-700 shadow-lg disabled:opacity-50 min-h-[44px]",
+  kids: "min-h-[48px] bg-kids-purple text-white shadow-[0_5px_0_#4c1d95] hover:-translate-y-0.5 hover:bg-violet-700 disabled:hover:translate-y-0 disabled:opacity-50",
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className = "", variant = "primary", fullWidth, children, ...props }, ref) => (
     <button
       ref={ref}
-      className={`inline-flex items-center justify-center rounded-xl px-5 py-2.5 text-sm font-semibold transition ${variants[variant]} ${fullWidth ? "w-full" : ""} ${className}`}
+      className={`inline-flex items-center justify-center rounded-xl px-5 py-2.5 text-sm font-extrabold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-300 ${variants[variant]} ${fullWidth ? "w-full" : ""} ${className}`}
       {...props}
     >
       {children}
